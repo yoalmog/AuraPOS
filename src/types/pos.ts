@@ -25,16 +25,45 @@ export interface Employee {
   permissions: string[];
 }
 
+export interface CategoryTranslation {
+  id: string;
+  categoryId: string;
+  locale: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CategoryAuditLog {
+  id: string;
+  userId: string;
+  userName?: string;
+  categoryId: string;
+  categoryName?: string;
+  action: 'created' | 'updated' | 'deleted' | 'activated' | 'deactivated' | 'reordered';
+  timestamp: string;
+  details?: string;
+}
+
 export interface Category {
   id: string;
   storeId: string;
   name: string;
   description?: string;
   iconName: string;
+  imageUrl?: string;
   color: string; // Visual tag for rapid touch recognition
   sortOrder: number;
-  active: boolean;
+  active: boolean; // is_active
+  defaultLocale?: string;
+  parentId?: string; // Optional parent category
+  printerId?: string; // Target printer ID for kitchen/order routing
+  autoPrintKitchen?: boolean; // Auto-print Kitchen Order
   productCount?: number;
+  translations?: Record<string, { name: string; description?: string }>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ProductVariant {

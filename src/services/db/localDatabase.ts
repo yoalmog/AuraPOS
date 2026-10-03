@@ -20,8 +20,8 @@ import { Printer, PrintJob, PrinterRoute } from '../../types/printer.ts';
  * to ensure bulletproof persistence across app restart, device reboot, and process kills.
  */
 class LocalDatabaseManager {
-  private dbName = 'aurapos_offline_db_v2';
-  private dbVersion = 2;
+  private dbName = 'aurapos_offline_db_v3';
+  private dbVersion = 3;
   private idb: IDBDatabase | null = null;
   private isReady = false;
 
@@ -46,7 +46,23 @@ class LocalDatabaseManager {
 
         // 2. Categories store
         if (!db.objectStoreNames.contains('categories')) {
-          db.createObjectStore('categories', { keyPath: 'id' });
+          const store = db.createObjectStore('categories', { keyPath: 'id' });
+          store.createIndex('sortOrder', 'sortOrder', { unique: false });
+          store.createIndex('active', 'active', { unique: false });
+        }
+
+        // 2b. Category Translations store (Section 19)
+        if (!db.objectStoreNames.contains('category_translations')) {
+          const store = db.createObjectStore('category_translations', { keyPath: 'id' });
+          store.createIndex('categoryId', 'categoryId', { unique: false });
+          store.createIndex('locale', 'locale', { unique: false });
+        }
+
+        // 2c. Category Audit Logs store (Section 28)
+        if (!db.objectStoreNames.contains('category_audit_logs')) {
+          const store = db.createObjectStore('category_audit_logs', { keyPath: 'id' });
+          store.createIndex('categoryId', 'categoryId', { unique: false });
+          store.createIndex('timestamp', 'timestamp', { unique: false });
         }
 
         // 3. Sales store

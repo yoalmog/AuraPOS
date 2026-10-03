@@ -39,6 +39,7 @@ export type AppRoute =
   | 'checkout'
   | 'sales'
   | 'products'
+  | 'categories'
   | 'inventory'
   | 'customers'
   | 'employees'
@@ -184,6 +185,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Core Data
   const [settings, setSettings] = useState<StoreSettings>(() => StorageService.getSettings());
+  const [categories, setCategories] = useState<Category[]>(() => StorageService.getCategories());
 
   // Localization & Theme
   const [language, setLanguageState] = useState<SupportedLanguage>(() => {
@@ -237,11 +239,27 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const translateCategoryName = useCallback((categoryId: string, defaultName?: string): string => {
-    const localized = CATEGORY_TRANSLATIONS[language]?.[categoryId];
-    if (localized) return localized;
-    const fallbackLoc = CATEGORY_TRANSLATIONS.en?.[categoryId];
-    return defaultName || fallbackLoc || categoryId;
-  }, [language]);
+    // 1. Check real category_translations table from database
+    const dbTranslations = StorageService.getCategoryTranslations();
+    const match = dbTranslations.find(t => t.categoryId === categoryId && t.locale === language);
+    if (match && match.name && match.name.trim()) return match.name;
+
+    // 2. Check category object itself in categories state
+    const cat = categories.find(c => c.id === categoryId);
+    if (cat?.translations?.[language]?.name) {
+      return cat.translations[language].name;
+    }
+
+    // 3. Fallback to category's default name
+    if (cat?.name) return cat.name;
+    if (defaultName && !defaultName.startsWith('category.')) return defaultName;
+
+    // 4. Static catalog fallback if applicable
+    const staticLoc = CATEGORY_TRANSLATIONS[language]?.[categoryId] || CATEGORY_TRANSLATIONS.en?.[categoryId];
+    if (staticLoc) return staticLoc;
+
+    return defaultName || categoryId;
+  }, [language, categories]);
 
   const translateProductName = useCallback((productId: string, defaultName?: string): string => {
     const localized = PRODUCT_TRANSLATIONS[language]?.[productId];
@@ -284,7 +302,6 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       document.documentElement.setAttribute('dir', langOpt?.dir || 'ltr');
     }
   }, [themeColor, language]);
-  const [categories, setCategories] = useState<Category[]>(() => StorageService.getCategories());
   const [products, setProducts] = useState<Product[]>(() => StorageService.getProducts());
   const [customers, setCustomers] = useState<Customer[]>(() => StorageService.getCustomers());
   const [sales, setSales] = useState<Sale[]>(() => StorageService.getSales());

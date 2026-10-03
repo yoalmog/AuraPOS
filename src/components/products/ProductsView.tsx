@@ -17,7 +17,8 @@ import {
   Check,
   Image as ImageIcon,
   Upload,
-  Sparkles
+  Sparkles,
+  FolderTree
 } from 'lucide-react';
 import { PRODUCT_IMAGE_PRESETS } from '../../utils/productImages.ts';
 
@@ -30,6 +31,7 @@ export const ProductsView: React.FC = () => {
     settings,
     isOwner,
     requireOwnerAuth,
+    setActiveRoute,
     translateProductName,
     translateCategoryName,
     t
@@ -44,7 +46,9 @@ export const ProductsView: React.FC = () => {
   const [formName, setFormName] = useState<string>('');
   const [formSku, setFormSku] = useState<string>('');
   const [formBarcode, setFormBarcode] = useState<string>('');
-  const [formCategoryId, setFormCategoryId] = useState<string>('cat_coffee');
+  const [formCategoryId, setFormCategoryId] = useState<string>(() => {
+    return categories.find(c => c.active)?.id || '';
+  });
   const [formDescription, setFormDescription] = useState<string>('');
   const [formPrice, setFormPrice] = useState<string>('');
   const [formCost, setFormCost] = useState<string>('');
@@ -262,6 +266,32 @@ export const ProductsView: React.FC = () => {
   return (
     <div className="flex-1 bg-slate-50 p-6 overflow-y-auto">
       <div className="max-w-7xl mx-auto space-y-5">
+        {/* Navigation Tabs (Products vs Categories - Section 1) */}
+        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+          <button
+            type="button"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-white text-blue-600 shadow-2xs border border-slate-200/80 transition-all"
+          >
+            <Package className="w-4 h-4 text-blue-600" />
+            <span>Products</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-mono font-bold">
+              {products.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveRoute('categories')}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 hover:bg-slate-200/50 transition-colors"
+          >
+            <FolderTree className="w-4 h-4 text-slate-500" />
+            <span>Categories</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600 text-[10px] font-mono font-bold">
+              {categories.length}
+            </span>
+          </button>
+        </div>
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -602,20 +632,50 @@ export const ProductsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Category *</label>
-                  <select
-                    value={formCategoryId}
-                    onChange={e => setFormCategoryId(e.target.value)}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-300 bg-white"
-                  >
-                    {categories
-                      .filter(c => c.id !== 'cat_all' && c.id !== 'cat_fav')
-                      .map(c => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-700">Category *</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsModalOpen(false);
+                        setActiveRoute('categories');
+                      }}
+                      className="text-[11px] text-blue-600 hover:underline font-semibold"
+                    >
+                      + Manage Categories
+                    </button>
+                  </div>
+                  {categories.filter(c => c.active).length === 0 ? (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center justify-between">
+                      <span>No active categories found.</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsModalOpen(false);
+                          setActiveRoute('categories');
+                        }}
+                        className="font-bold underline"
+                      >
+                        Create one now
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={formCategoryId}
+                      onChange={e => setFormCategoryId(e.target.value)}
+                      required
+                      className="w-full text-xs p-2.5 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-800"
+                    >
+                      <option value="">-- Select Category ▼ --</option>
+                      {categories
+                        .filter(c => c.active)
+                        .map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </select>
+                  )}
                 </div>
               </div>
 

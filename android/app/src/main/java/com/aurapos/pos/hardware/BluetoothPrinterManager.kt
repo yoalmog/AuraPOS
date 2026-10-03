@@ -182,6 +182,34 @@ class BluetoothPrinterManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
+    fun pairDevice(macAddress: String): JSONObject {
+        val result = JSONObject()
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
+            result.put("success", false)
+            result.put("error", "Bluetooth is unavailable.")
+            return result
+        }
+
+        try {
+            val device = bluetoothAdapter.getRemoteDevice(macAddress)
+            if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                result.put("success", true)
+                result.put("bonded", true)
+                result.put("message", "Device is already paired.")
+                return result
+            }
+
+            val started = device.createBond()
+            result.put("success", started)
+            result.put("message", if (started) "Pairing request dispatched." else "Could not start pairing.")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Pairing failed")
+        }
+        return result
+    }
+
+    @SuppressLint("MissingPermission")
     fun getDiscoveredDevicesJson(): String {
         val array = JSONArray()
         discoveredDevices.values.forEach { device ->

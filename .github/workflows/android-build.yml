@@ -1,0 +1,153 @@
+name: Android CI/CD - Build & Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type to assemble'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - debug
+          - release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v') }}
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  build:
+    name: Build & Test Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # 1. Checkout repository source code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. Validate Gradle Wrapper integrity to prevent supply-chain attacks
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      # 3. Setup Node.js and build hybrid web assets for Android WebView shell
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies & Build Web Assets
+        run: |
+          npm ci || npm install
+          npm run build
+
+      # 4. Setup Java JDK 17 (Required by Android Gradle Plugin 8.3+)
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 5. Setup Gradle with automatic build cache and daemon management
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v') }}
+
+      # 6. Ensure gradlew is executable
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x android/gradlew
+
+      # 7. Run Unit Tests
+      - name: Run Android Unit Tests
+        working-directory: ./android
+        run: ./gradlew test --continue
+
+      # 8. Upload Unit Test Results / Reports
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: android/app/build/reports/tests/
+          retention-days: 7
+
+      # 9. Build Debug APK
+      - name: Build Debug APK
+        if: github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'all' || github.event.inputs.build_type == '' || !github.event.inputs.build_type
+        working-directory: ./android
+        run: ./gradlew assembleDebug --stacktrace
+
+      # 10. Upload Debug APK Artifact
+      - name: Upload Debug APK Artifact
+        if: github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'all' || github.event.inputs.build_type == '' || !github.event.inputs.build_type
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurapos-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      # 11. Prepare Keystore for Signed Production Release APK
+      - name: Configure Production Signing Keystore
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all'
+        working-directory: ./android
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "Decoding release keystore from secrets..."
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > app/release.jks
+            echo "ANDROID_KEYSTORE_PATH=${{ github.workspace }}/android/app/release.jks" >> $GITHUB_ENV
+            echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> $GITHUB_ENV
+            echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> $GITHUB_ENV
+          else
+            echo "No base64 keystore provided in secrets; checking for CI fallback or debug signing fallback..."
+          fi
+
+      # 12. Build Signed Production Release APK
+      - name: Build Production Release APK
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all'
+        working-directory: ./android
+        run: ./gradlew assembleRelease --stacktrace
+
+      # 13. Upload Production Release APK Artifact
+      - name: Upload Production Release APK Artifact
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurapos-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      # 14. Create GitHub Release & Attach Signed Release APK (Release Tag Trigger: v*)
+      - name: Create GitHub Release and Attach APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AuraPOS Release ${{ github.ref_name }}"
+          tag_name: ${{ github.ref_name }}
+          files: |
+            android/app/build/outputs/apk/release/*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

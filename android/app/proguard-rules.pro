@@ -9,6 +9,7 @@
 
 -keep class com.aurapos.pos.bridge.** { *; }
 -keep class com.aurapos.pos.hardware.** { *; }
+-keep class com.aurapos.pos.device.** { *; }
 -keep class com.aurapos.pos.data.** { *; }
 
 # Keep GSON models

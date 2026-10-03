@@ -9,6 +9,7 @@ import { POSScreen } from './components/pos/POSScreen.tsx';
 import { CheckoutScreen } from './components/pos/CheckoutScreen.tsx';
 import { SalesView } from './components/sales/SalesView.tsx';
 import { ProductsView } from './components/products/ProductsView.tsx';
+import { CategoriesView } from './components/categories/CategoriesView.tsx';
 import { InventoryView } from './components/inventory/InventoryView.tsx';
 import { CustomersView } from './components/customers/CustomersView.tsx';
 import { EmployeesView } from './components/employees/EmployeesView.tsx';
@@ -63,6 +64,7 @@ const POSAppContent: React.FC = () => {
           {activeRoute === 'checkout' && <CheckoutScreen />}
           {activeRoute === 'sales' && <SalesView />}
           {activeRoute === 'products' && <ProductsView />}
+          {activeRoute === 'categories' && <CategoriesView />}
           {activeRoute === 'inventory' && <InventoryView />}
           {activeRoute === 'customers' && <CustomersView />}
           {activeRoute === 'employees' && <EmployeesView />}

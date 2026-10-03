@@ -19,6 +19,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.aurapos.pos.bridge.NativeBridge
 import com.aurapos.pos.data.LocalDatabaseHelper
+import com.aurapos.pos.device.DeviceManager
 import com.aurapos.pos.hardware.*
 
 /**
@@ -28,6 +29,7 @@ import com.aurapos.pos.hardware.*
  * - Hardware barcode gun / wedge scanner interception
  * - Native hardware bridge initialization
  * - Bluetooth, USB, and LAN printer permissions
+ * - Master DeviceManager lifecycle integration
  */
 class MainActivity : AppCompatActivity() {
 
@@ -39,6 +41,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cashDrawerManager: CashDrawerManager
     private lateinit var barcodeManager: BarcodeScannerManager
     private lateinit var dbHelper: LocalDatabaseHelper
+    lateinit var deviceManager: DeviceManager
+        private set
 
     // Permission launcher for Android 12+ Bluetooth
     private val requestBluetoothPermissionsLauncher = registerForActivityResult(

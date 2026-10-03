@@ -273,75 +273,76 @@ export class PrintService {
       results.push({ printerName: receiptPrinter.name, success: jobRes.success });
     }
 
-    // 2. Filter food & drink items for kitchen / bar routing
-    const kitchenItems: SaleItem[] = [];
-    const barItems: SaleItem[] = [];
+    // 2. Dynamic Order Ticket Routing (Requirement 21 & 22)
+    // Priority: Product printer -> Category printer -> Purpose/Default printer
+    const categories = StorageService.getCategories();
+    const itemsByPrinter = new Map<string, { printer: Printer; items: SaleItem[]; stationTitle: string }>();
 
     sale.items.forEach(item => {
       const prod = products.find(p => p.id === item.productId);
-      const catId = prod ? prod.categoryId : '';
+      const cat = categories.find(c => c.id === prod?.categoryId);
 
-      // Drinks: coffee, tea, beverages
-      if (catId === 'cat_coffee' || catId === 'cat_tea' || catId === 'cat_cold') {
-        barItems.push(item);
-      } else {
-        // Food: bakery, kitchen, food, desserts
-        kitchenItems.push(item);
+      // If category explicitly disabled auto-printing kitchen orders, skip kitchen routing
+      if (cat && cat.autoPrintKitchen === false) {
+        return;
+      }
+
+      // Determine category or purpose default
+      let targetPrinter: Printer | undefined;
+
+      // 1. Direct product route check
+      targetPrinter = this.resolvePrinter({
+        productId: item.productId,
+        categoryId: prod?.categoryId,
+        purpose: 'kitchen'
+      });
+
+      // 2. Fallback to category assigned printer if not found in routes
+      if (!targetPrinter && cat?.printerId) {
+        targetPrinter = this.getPrinterById(cat.printerId);
+      }
+
+      // 3. Fallback to kitchen/bar purpose default if food/drinks
+      if (!targetPrinter) {
+        targetPrinter = this.resolvePrinter({ purpose: 'kitchen' });
+      }
+
+      // Only dispatch if printer exists, autoPrint is enabled, and is separate from receipt printer or explicitly marked for tickets
+      if (targetPrinter && targetPrinter.autoPrint && targetPrinter.id !== receiptPrinter?.id) {
+        const stationTitle = cat?.name
+          ? `${cat.name.toUpperCase()} ORDER`
+          : targetPrinter.printerPurpose === 'bar'
+            ? 'BAR ORDER'
+            : 'KITCHEN ORDER';
+
+        if (!itemsByPrinter.has(targetPrinter.id)) {
+          itemsByPrinter.set(targetPrinter.id, { printer: targetPrinter, items: [], stationTitle });
+        }
+        itemsByPrinter.get(targetPrinter.id)!.items.push(item);
       }
     });
 
-    // 3. Dispatch Kitchen Order Ticket
-    if (kitchenItems.length > 0) {
-      const kitchenPrinter = this.resolvePrinter({ purpose: 'kitchen' });
-      if (kitchenPrinter && kitchenPrinter.autoPrint && kitchenPrinter.id !== receiptPrinter?.id) {
+    // 3. Dispatch tickets to each target printer
+    for (const [_, group] of itemsByPrinter) {
+      if (group.items.length > 0) {
         const { builder, previewText } = this.buildOrderTicket({
           sale,
-          items: kitchenItems,
-          stationTitle: 'KITCHEN ORDER',
-          printer: kitchenPrinter
+          items: group.items,
+          stationTitle: group.stationTitle,
+          printer: group.printer
         });
 
         const jobRes = await this.executeJob({
-          printer: kitchenPrinter,
-          jobType: 'kitchen',
-          title: `Kitchen Ticket #${sale.receiptNumber}`,
+          printer: group.printer,
+          jobType: group.printer.printerPurpose === 'bar' ? 'bar' : 'kitchen',
+          title: `${group.stationTitle} #${sale.receiptNumber}`,
           saleId: sale.id,
           bytes: builder.toBytes(),
           previewText,
-          cutPaper: kitchenPrinter.supportsCut,
+          cutPaper: group.printer.supportsCut,
           kickDrawer: false
         });
-        results.push({ printerName: kitchenPrinter.name, success: jobRes.success });
-      }
-    }
-
-    // 4. Dispatch Bar Order Ticket
-    if (barItems.length > 0) {
-      const barPrinter = this.resolvePrinter({ purpose: 'bar' });
-      if (
-        barPrinter &&
-        barPrinter.autoPrint &&
-        barPrinter.id !== receiptPrinter?.id &&
-        barPrinter.id !== this.resolvePrinter({ purpose: 'kitchen' })?.id
-      ) {
-        const { builder, previewText } = this.buildOrderTicket({
-          sale,
-          items: barItems,
-          stationTitle: 'BAR ORDER',
-          printer: barPrinter
-        });
-
-        const jobRes = await this.executeJob({
-          printer: barPrinter,
-          jobType: 'bar',
-          title: `Bar Ticket #${sale.receiptNumber}`,
-          saleId: sale.id,
-          bytes: builder.toBytes(),
-          previewText,
-          cutPaper: barPrinter.supportsCut,
-          kickDrawer: false
-        });
-        results.push({ printerName: barPrinter.name, success: jobRes.success });
+        results.push({ printerName: group.printer.name, success: jobRes.success });
       }
     }
 

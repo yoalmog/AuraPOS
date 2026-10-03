@@ -658,7 +658,30 @@ export const en = {
   'receipt.thankYou': 'Thank you for your business!',
   'receipt.itemsCount': 'Total Items',
   'receipt.reprintLabel': 'DUPLICATE RECEIPT',
-  'receipt.duplicateReceipt': 'Reprint Copy'
-} as const;
+  'receipt.duplicateReceipt': 'Reprint Copy',
+  'nav.categories': 'Categories',
+  'categories.title': 'Categories',
+  'categories.description': 'Organize your products into categories.',
+  'categories.addCategory': '+ Add Category',
+  'categories.editCategory': 'Edit Category',
+  'categories.deleteCategory': 'Delete Category',
+  'categories.categoryName': 'Category Name',
+  'categories.categoryDescription': 'Description',
+  'categories.icon': 'Icon',
+  'categories.color': 'Color',
+  'categories.displayOrder': 'Display Order',
+  'categories.status': 'Status',
+  'categories.active': 'Active',
+  'categories.inactive': 'Inactive',
+  'categories.deletePrompt': 'Delete category?',
+  'categories.containsProducts': 'This category contains products.',
+  'categories.moveProducts': 'Move Products to Another Category',
+  'categories.emptyState': 'No categories yet.',
+  'categories.emptyStateSub': 'Create a category to organize your products.',
+  'categories.createSampleConfirm': 'Create sample categories?',
+  'categories.alreadyExists': 'This category already exists.',
+  'categories.nameRequired': 'Category name is required.',
+  'categories.emptyInPos': 'No custom categories'
+};
 
-export type TranslationKey = keyof typeof en;
+export type TranslationKey = string;

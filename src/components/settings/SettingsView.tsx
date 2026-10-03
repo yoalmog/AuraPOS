@@ -21,7 +21,8 @@ import {
   Check,
   ShieldCheck,
   Lock,
-  UserCheck
+  UserCheck,
+  FolderTree
 } from 'lucide-react';
 import { PrinterSettings } from './printers/PrinterSettings.tsx';
 import { THEME_PRESETS, ThemeColor, applyThemeVariables } from '../../utils/theme.ts';
@@ -43,6 +44,7 @@ export const SettingsView: React.FC = () => {
     ownerEmployee,
     requireOwnerAuth,
     switchEmployee,
+    setActiveRoute,
     t
   } = usePOS();
 
@@ -163,6 +165,7 @@ export const SettingsView: React.FC = () => {
         <div className="flex border-b border-slate-200 gap-6 text-xs font-semibold overflow-x-auto scrollbar-none">
           {[
             { id: 'store', label: t('settings.storeProfile', 'Store Information'), icon: Store },
+            { id: 'categories', label: 'Categories', icon: FolderTree, isRoute: true },
             { id: 'printers', label: t('settings.printers', 'Printers & Hardware'), icon: Printer },
             { id: 'receipt', label: t('settings.receipt', 'Receipt Customizer'), icon: Receipt },
             { id: 'loyalty', label: t('settings.loyalty', 'Loyalty Program Rules'), icon: Award },
@@ -173,7 +176,14 @@ export const SettingsView: React.FC = () => {
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                type="button"
+                onClick={() => {
+                  if ((tab as any).isRoute) {
+                    setActiveRoute('categories');
+                  } else {
+                    setActiveTab(tab.id as any);
+                  }
+                }}
                 className={`flex items-center gap-2 pb-3 transition-colors border-b-2 -mb-px whitespace-nowrap ${
                   isSelected
                     ? 'border-blue-600 text-blue-600 font-bold'

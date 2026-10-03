@@ -67,7 +67,12 @@ export const INITIAL_EMPLOYEES: Employee[] = [
       'reports',
       'discounts',
       'settings',
-      'employees'
+      'employees',
+      'category.view',
+      'category.create',
+      'category.edit',
+      'category.delete',
+      'category.reorder'
     ]
   }
 ];

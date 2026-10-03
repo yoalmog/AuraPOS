@@ -1,5 +1,7 @@
 import {
   Category,
+  CategoryTranslation,
+  CategoryAuditLog,
   Product,
   Customer,
   Employee,
@@ -32,6 +34,8 @@ const STORAGE_KEYS = {
   SETTINGS: 'aurapos_store_settings_v2',
   EMPLOYEES: 'aurapos_employees_v2',
   CATEGORIES: 'aurapos_categories_v2',
+  CATEGORY_TRANSLATIONS: 'aurapos_category_translations_v2',
+  CATEGORY_AUDIT_LOGS: 'aurapos_category_audit_logs_v2',
   PRODUCTS: 'aurapos_products_v2',
   CUSTOMERS: 'aurapos_customers_v2',
   DISCOUNTS: 'aurapos_discounts_v2',
@@ -128,6 +132,33 @@ export class StorageService {
   }
   static saveCategories(categories: Category[]): void {
     setStorageItem(STORAGE_KEYS.CATEGORIES, categories);
+  }
+
+  // Category Multilingual Translations (Section 19)
+  static getCategoryTranslations(): CategoryTranslation[] {
+    return getStorageItem<CategoryTranslation[]>(STORAGE_KEYS.CATEGORY_TRANSLATIONS, []);
+  }
+  static saveCategoryTranslations(translations: CategoryTranslation[]): void {
+    setStorageItem(STORAGE_KEYS.CATEGORY_TRANSLATIONS, translations);
+  }
+
+  // Category Audit Log (Section 28)
+  static getCategoryAuditLogs(): CategoryAuditLog[] {
+    return getStorageItem<CategoryAuditLog[]>(STORAGE_KEYS.CATEGORY_AUDIT_LOGS, []);
+  }
+  static saveCategoryAuditLogs(logs: CategoryAuditLog[]): void {
+    setStorageItem(STORAGE_KEYS.CATEGORY_AUDIT_LOGS, logs);
+  }
+  static logCategoryAudit(actionData: Omit<CategoryAuditLog, 'id' | 'timestamp'>): void {
+    const logs = this.getCategoryAuditLogs();
+    const newLog: CategoryAuditLog = {
+      id: `audit_cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      ...actionData
+    };
+    logs.unshift(newLog);
+    // Keep last 200 logs
+    this.saveCategoryAuditLogs(logs.slice(0, 200));
   }
 
   // Products
