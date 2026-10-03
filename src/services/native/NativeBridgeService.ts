@@ -1,0 +1,432 @@
+/**
+ * AuraPOS Centralized Native Android Hardware Bridge Service
+ * Conforming to Section 4:
+ * The frontend communicates with hardware ONLY through this bridge.
+ * Exposes:
+ * - printer.scanBluetooth()
+ * - printer.connectBluetooth(deviceId)
+ * - printer.disconnectBluetooth(deviceId)
+ * - printer.print(printerId, data)
+ * - printer.testPrint(printerId)
+ * - printer.scanUSB()
+ * - printer.connectUSB(deviceId)
+ * - printer.disconnectUSB(deviceId)
+ * - printer.connectNetwork(ip, port)
+ * - printer.testNetwork(ip, port)
+ * - barcode.startScanner()
+ * - barcode.stopScanner()
+ * - cashDrawer.open(printerId)
+ * - diagnostics.getDiagnostics()
+ *
+ * Section 36 & 44:
+ * Clearly separates Native Android Production from Browser Preview.
+ * In browser preview, reports that native hardware is unavailable.
+ * Never fakes hardware operations.
+ */
+
+// Declare the Android interface injected by MainActivity
+declare global {
+  interface Window {
+    AndroidPOSNative?: {
+      scanBluetooth: () => string;
+      stopBluetoothScan: () => void;
+      getPairedBluetoothDevices: () => string;
+      connectBluetooth: (macAddress: String, callbackId: string) => void;
+      disconnectBluetooth: (macAddress: string) => void;
+      requestBluetoothPermissions?: () => void;
+      getBluetoothStatus?: () => string;
+
+      scanUSB: () => string;
+      connectUSB: (deviceName: string, callbackId: string) => void;
+      disconnectUSB: (deviceName: string) => void;
+
+      testNetwork: (ip: string, port: number, callbackId: string) => void;
+
+      print: (
+        connectionType: string,
+        targetIdentifier: string,
+        base64Data: string,
+        port: number,
+        callbackId: string
+      ) => void;
+
+      openCashDrawer: (
+        printerType: string,
+        targetIdentifier: string,
+        port: number,
+        callbackId: string
+      ) => void;
+
+      startBarcodeScanner: () => void;
+      stopBarcodeScanner: () => void;
+
+      getDiagnostics: () => string;
+    };
+    __AuraPOSNativeCallbacks?: Record<string, (result: any) => void>;
+    __AuraPOSEventBus?: {
+      emit: (event: string, payload: any) => void;
+      listeners: Record<string, Array<(payload: any) => void>>;
+      on: (event: string, fn: (payload: any) => void) => () => void;
+    };
+  }
+}
+
+// Initialize Global Event Bus for Native Callbacks and Hardware Events
+if (typeof window !== 'undefined') {
+  window.__AuraPOSNativeCallbacks = window.__AuraPOSNativeCallbacks || {};
+  if (!window.__AuraPOSEventBus) {
+    const listeners: Record<string, Array<(payload: any) => void>> = {};
+    window.__AuraPOSEventBus = {
+      listeners,
+      emit: (event, payload) => {
+        const fns = listeners[event] || [];
+        fns.forEach(fn => {
+          try {
+            fn(payload);
+          } catch (e) {
+            console.error(`Error in event listener for ${event}:`, e);
+          }
+        });
+      },
+      on: (event, fn) => {
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(fn);
+        return () => {
+          listeners[event] = (listeners[event] || []).filter(item => item !== fn);
+        };
+      }
+    };
+  }
+}
+
+export interface DiscoveredNativeDevice {
+  id: string;
+  name: string;
+  address?: string;
+  bonded?: boolean;
+  type: 'bluetooth' | 'usb';
+  vendorId?: number;
+  productId?: number;
+  hasPermission?: boolean;
+}
+
+export interface HardwareDiagnosticsResult {
+  isNativeAndroid: boolean;
+  androidVersion?: string;
+  sdkInt?: number;
+  deviceModel?: string;
+  bluetoothAvailable?: boolean;
+  networkAvailable?: boolean;
+  appVersion?: string;
+  statusMessage?: string;
+}
+
+export class NativeBridgeService {
+  /**
+   * Check if running within the dedicated Native Android POS runtime
+   */
+  static isNativeAndroid(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      !!window.AndroidPOSNative &&
+      typeof window.AndroidPOSNative.print === 'function'
+    );
+  }
+
+  private static callNativeAsync<T>(executor: (callbackId: string) => void): Promise<T> {
+    return new Promise((resolve, reject) => {
+      if (!this.isNativeAndroid()) {
+        reject(
+          new Error(
+            'Native Android hardware is unavailable in browser preview. Install and run the AuraPOS APK on an Android POS device or terminal.'
+          )
+        );
+        return;
+      }
+
+      const callbackId = `cb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const timeout = setTimeout(() => {
+        delete window.__AuraPOSNativeCallbacks?.[callbackId];
+        reject(new Error('Native hardware bridge response timed out.'));
+      }, 10000);
+
+      window.__AuraPOSNativeCallbacks![callbackId] = (result: any) => {
+        clearTimeout(timeout);
+        delete window.__AuraPOSNativeCallbacks?.[callbackId];
+        resolve(result as T);
+      };
+
+      try {
+        executor(callbackId);
+      } catch (e) {
+        clearTimeout(timeout);
+        delete window.__AuraPOSNativeCallbacks?.[callbackId];
+        reject(e);
+      }
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // Centralized Printer Hardware Bridge
+  // --------------------------------------------------------------------------
+  static printer = {
+    /**
+     * Start physical Bluetooth scanning (Section 5)
+     */
+    scanBluetooth: (onDevicesUpdate?: (devices: DiscoveredNativeDevice[]) => void): { success: boolean; error?: string; isNative: boolean } => {
+      if (!NativeBridgeService.isNativeAndroid()) {
+        return {
+          success: false,
+          isNative: false,
+          error: 'Native Android hardware is unavailable in browser preview. Run the APK on an Android POS device to discover real Bluetooth printers.'
+        };
+      }
+
+      if (onDevicesUpdate && window.__AuraPOSEventBus) {
+        window.__AuraPOSEventBus.on('onBluetoothDevicesDiscovered', (rawJson: string) => {
+          try {
+            const list = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson;
+            onDevicesUpdate(list);
+          } catch (e) {
+            console.error('Failed to parse discovered Bluetooth devices:', e);
+          }
+        });
+      }
+
+      try {
+        const resStr = window.AndroidPOSNative!.scanBluetooth();
+        const res = JSON.parse(resStr);
+        return { success: res.success, error: res.error, isNative: true };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Bluetooth scan error', isNative: true };
+      }
+    },
+
+    stopBluetoothScan: (): void => {
+      if (NativeBridgeService.isNativeAndroid()) {
+        window.AndroidPOSNative!.stopBluetoothScan();
+      }
+    },
+
+    getPairedBluetoothDevices: (): DiscoveredNativeDevice[] => {
+      if (!NativeBridgeService.isNativeAndroid()) return [];
+      try {
+        const raw = window.AndroidPOSNative!.getPairedBluetoothDevices();
+        return JSON.parse(raw);
+      } catch {
+        return [];
+      }
+    },
+
+    getBluetoothStatus: (): { enabled: boolean; hasPermissions: boolean; isNative: boolean } => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.getBluetoothStatus) {
+        return { enabled: true, hasPermissions: true, isNative: false };
+      }
+      try {
+        const raw = window.AndroidPOSNative.getBluetoothStatus();
+        const parsed = JSON.parse(raw);
+        return { enabled: !!parsed.enabled, hasPermissions: !!parsed.hasPermissions, isNative: true };
+      } catch {
+        return { enabled: true, hasPermissions: true, isNative: true };
+      }
+    },
+
+    requestBluetoothPermissions: (): void => {
+      if (NativeBridgeService.isNativeAndroid() && window.AndroidPOSNative?.requestBluetoothPermissions) {
+        window.AndroidPOSNative.requestBluetoothPermissions();
+      }
+    },
+
+    connectBluetooth: async (deviceId: string): Promise<{ success: boolean; status?: string; name?: string; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.connectBluetooth(deviceId, callbackId);
+      });
+    },
+
+    disconnectBluetooth: (deviceId: string): void => {
+      if (NativeBridgeService.isNativeAndroid()) {
+        window.AndroidPOSNative!.disconnectBluetooth(deviceId);
+      }
+    },
+
+    /**
+     * Scan physical USB thermal printers (Section 8)
+     */
+    scanUSB: (): DiscoveredNativeDevice[] => {
+      if (!NativeBridgeService.isNativeAndroid()) return [];
+      try {
+        const raw = window.AndroidPOSNative!.scanUSB();
+        return JSON.parse(raw);
+      } catch {
+        return [];
+      }
+    },
+
+    connectUSB: async (deviceId: string): Promise<{ success: boolean; status?: string; name?: string; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.connectUSB(deviceId, callbackId);
+      });
+    },
+
+    disconnectUSB: (deviceId: string): void => {
+      if (NativeBridgeService.isNativeAndroid()) {
+        window.AndroidPOSNative!.disconnectUSB(deviceId);
+      }
+    },
+
+    /**
+     * LAN / Wi-Fi thermal printer socket test (Section 7)
+     */
+    connectNetwork: async (ip: string, port: number = 9100): Promise<{ success: boolean; status?: string; latencyMs?: number; message?: string; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.testNetwork(ip, port, callbackId);
+      });
+    },
+
+    testNetwork: async (ip: string, port: number = 9100): Promise<{ success: boolean; status?: string; latencyMs?: number; message?: string; error?: string }> => {
+      return NativeBridgeService.printer.connectNetwork(ip, port);
+    },
+
+    /**
+     * Dispatch raw ESC/POS binary stream to physical printer (Section 9 & 10)
+     */
+    print: async (
+      connectionType: 'bluetooth' | 'lan' | 'usb' | string,
+      targetIdentifier: string,
+      rawBytes: Uint8Array,
+      port: number = 9100
+    ): Promise<{ success: boolean; bytesPrinted?: number; error?: string }> => {
+      if (!NativeBridgeService.isNativeAndroid()) {
+        return {
+          success: false,
+          error: 'Native Android hardware is unavailable in browser preview. Install and run the AuraPOS APK on an Android POS terminal.'
+        };
+      }
+
+      // Encode raw binary ESC/POS bytes to standard Base64
+      let binaryString = '';
+      for (let i = 0; i < rawBytes.length; i++) {
+        binaryString += String.fromCharCode(rawBytes[i]);
+      }
+      const base64Data = btoa(binaryString);
+
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.print(connectionType, targetIdentifier, base64Data, port, callbackId);
+      });
+    },
+
+    testPrint: async (printer: {
+      connectionType: string;
+      deviceIdentifier?: string;
+      ipAddress?: string;
+      port?: number;
+      name?: string;
+      paperWidth?: number;
+    }): Promise<{ success: boolean; message?: string; error?: string }> => {
+      // Build test receipt using unified EscPosRenderer
+      const targetId = printer.connectionType === 'lan' ? (printer.ipAddress || '') : (printer.deviceIdentifier || '');
+      if (!targetId) {
+        return { success: false, error: 'Printer identifier or IP address is missing.' };
+      }
+
+      // Standard ESC/POS test pattern
+      const testBytes = new Uint8Array([
+        0x1B, 0x40, // ESC @ (Init)
+        0x1B, 0x61, 0x01, // Center align
+        ...Array.from('*** AURAPOS NATIVE HARDWARE TEST ***\n').map(c => c.charCodeAt(0)),
+        ...Array.from(`Printer: ${printer.name || 'Terminal Thermal'}\n`).map(c => c.charCodeAt(0)),
+        ...Array.from(`Interface: ${printer.connectionType.toUpperCase()}\n`).map(c => c.charCodeAt(0)),
+        ...Array.from(`Timestamp: ${new Date().toLocaleString()}\n`).map(c => c.charCodeAt(0)),
+        ...Array.from('Status: HARDWARE CONNECTED & VERIFIED\n\n').map(c => c.charCodeAt(0)),
+        0x1B, 0x64, 0x03, // Feed 3 lines
+        0x1D, 0x56, 0x41, 0x00 // Partial cut
+      ]);
+
+      const res = await NativeBridgeService.printer.print(
+        printer.connectionType,
+        targetId,
+        testBytes,
+        printer.port || 9100
+      );
+
+      if (res.success) {
+        return { success: true, message: `Test receipt printed successfully on ${printer.name || 'printer'}.` };
+      }
+      return { success: false, error: res.error || 'Test print transmission failed.' };
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Centralized Barcode Scanner Bridge (Section 19)
+  // --------------------------------------------------------------------------
+  static barcode = {
+    startScanner: (onBarcodeScanned: (barcode: string) => void): (() => void) => {
+      if (NativeBridgeService.isNativeAndroid()) {
+        window.AndroidPOSNative!.startBarcodeScanner();
+      }
+
+      if (window.__AuraPOSEventBus) {
+        return window.__AuraPOSEventBus.on('onBarcodeScanned', (payload: any) => {
+          const barcode = typeof payload === 'string' ? JSON.parse(payload).barcode : payload.barcode;
+          if (barcode) {
+            onBarcodeScanned(barcode);
+          }
+        });
+      }
+
+      return () => {};
+    },
+
+    stopScanner: (): void => {
+      if (NativeBridgeService.isNativeAndroid()) {
+        window.AndroidPOSNative!.stopBarcodeScanner();
+      }
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Centralized Cash Drawer Bridge (Section 20)
+  // --------------------------------------------------------------------------
+  static cashDrawer = {
+    open: async (
+      printerType: string,
+      targetIdentifier: string,
+      port: number = 9100
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!NativeBridgeService.isNativeAndroid()) {
+        return {
+          success: false,
+          error: 'Native Android hardware is unavailable in browser preview.'
+        };
+      }
+
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.openCashDrawer(printerType, targetIdentifier, port, callbackId);
+      });
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Hardware Diagnostics (Section 32)
+  // --------------------------------------------------------------------------
+  static diagnostics = {
+    getDiagnostics: (): HardwareDiagnosticsResult => {
+      if (!NativeBridgeService.isNativeAndroid()) {
+        return {
+          isNativeAndroid: false,
+          statusMessage: 'Running in Web Browser Preview. Physical Bluetooth, USB, and LAN printer sockets require running inside the AuraPOS Android Shell.'
+        };
+      }
+
+      try {
+        const raw = window.AndroidPOSNative!.getDiagnostics();
+        return JSON.parse(raw);
+      } catch (e: any) {
+        return {
+          isNativeAndroid: true,
+          statusMessage: `Diagnostics error: ${e.message}`
+        };
+      }
+    }
+  };
+}

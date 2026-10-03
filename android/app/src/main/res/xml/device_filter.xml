@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB Printer Interface Class 7 (Printers), Subclass 1 -->
+    <usb-device class="7" subclass="1" />
+    <usb-device class="7" />
+    <!-- Common ESC/POS Thermal POS Printer Vendor IDs -->
+    <!-- Xprinter / X18 / POS-58 / POS-80 -->
+    <usb-device vendor-id="1155" /> <!-- 0x0483 STMicroelectronics USB Printer -->
+    <usb-device vendor-id="1659" /> <!-- 0x067B Prolific USB-Serial -->
+    <usb-device vendor-id="6790" /> <!-- 0x1A86 QinHeng Electronics CH340 -->
+    <usb-device vendor-id="1046" /> <!-- 0x0416 Winbond Electronics -->
+    <usb-device vendor-id="8137" /> <!-- 0x1FC9 NXP USB POS -->
+    <usb-device vendor-id="1027" /> <!-- 0x0403 FTDI USB Serial -->
+    <usb-device vendor-id="1123" /> <!-- 0x0463 Epson ESC/POS -->
+    <usb-device vendor-id="4070" /> <!-- 0x0FE6 Star Micronics -->
+    <usb-device vendor-id="1305" /> <!-- 0x0519 Star Micronics USB -->
+</resources>

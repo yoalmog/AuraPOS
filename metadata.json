@@ -1,0 +1,7 @@
+{
+  "name": "AuraPOS - Modern Retail & Café Point of Sale",
+  "description": "Touch-first, lightning-fast Point of Sale system for retail stores, cafés, restaurants, and boutiques with offline sync and inventory management.",
+  "requestFramePermissions": ["bluetooth"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
