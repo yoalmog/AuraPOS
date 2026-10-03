@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.WebViewAssetLoader
 import com.aurapos.pos.bridge.NativeBridge
 import com.aurapos.pos.data.LocalDatabaseHelper
 import com.aurapos.pos.device.DeviceManager
@@ -80,13 +81,21 @@ class MainActivity : AppCompatActivity() {
         // 3. Request required Bluetooth permissions on startup
         checkAndRequestPermissions()
 
-        // 4. Configure native WebView
+        // 4. Configure asset loader to serve local assets securely via HTTPS (resolves ES module CORS blocks)
+        val assetLoader = WebViewAssetLoader.Builder()
+            .setDomain("appassets.androidplatform.net")
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        // 5. Configure native WebView
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
             settings.allowFileAccess = true
             settings.allowContentAccess = true
+            settings.allowFileAccessFromFileURLs = true
+            settings.allowUniversalAccessFromFileURLs = true
             settings.mediaPlaybackRequiresUserGesture = false
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
@@ -99,6 +108,22 @@ class MainActivity : AppCompatActivity() {
             }
 
             webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): WebResourceResponse? {
+                    return assetLoader.shouldInterceptRequest(request.url)
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    error: WebResourceError?
+                ) {
+                    super.onReceivedError(view, request, error)
+                    android.util.Log.e("AuraPOS-Web", "Web resource error: ${error?.description} on ${request?.url}")
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     // Notify web layer that native Android host environment is ready
@@ -107,7 +132,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 5. Attach centralized NativeBridge
+        // 6. Attach centralized NativeBridge
         nativeBridge = NativeBridge(
             this,
             webView,
@@ -122,8 +147,8 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(webView)
 
-        // 6. Load POS Application (either local assets or remote host)
-        webView.loadUrl("file:///android_asset/index.html")
+        // 7. Load POS Application securely via WebViewAssetLoader
+        webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
     }
 
     private fun setupImmersiveMode() {

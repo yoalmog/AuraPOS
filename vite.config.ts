@@ -365,6 +365,7 @@ function categoryApiPlugin(): Plugin {
 
 export default defineConfig(() => {
   return {
+    base: './',
     plugins: [react(), tailwindcss(), printerBridgePlugin(), categoryApiPlugin()],
     resolve: {
       alias: {
