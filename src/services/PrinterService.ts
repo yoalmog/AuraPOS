@@ -72,7 +72,13 @@ export class PrinterService {
     ) {
       return this.builtinPrinterAdapter;
     }
-    if (printer.printerType === 'x18' || printer.connectionType === 'bluetooth') {
+    if (
+      printer.printerType === 'x18' ||
+      printer.printerType === 'x6' ||
+      printer.printerType === 'cat' ||
+      printer.connectionType === 'bluetooth' ||
+      printer.protocol === 'X6H_BLE'
+    ) {
       return this.x18BluetoothAdapter;
     }
     if (printer.connectionType === 'lan' || printer.printerType === 'escpos') {
@@ -107,6 +113,7 @@ export class PrinterService {
             model: 'Built-in Thermal Head',
             printerType: 'builtin',
             connectionType: 'builtin',
+            protocol: 'SUNMI',
             paperWidth: 58,
             charactersPerLine: 32,
             encoding: 'CP437',
@@ -133,10 +140,11 @@ export class PrinterService {
           const autoPrn: Printer = {
             id: `prn_bt_${first.address || first.id}`,
             storeId: 'store_1',
-            name: first.name || 'Bluetooth Receipt Printer',
-            model: isCat ? 'Cat/X6 Mini BLE Printer' : 'ESC/POS Bluetooth Thermal',
-            printerType: 'x18',
+            name: first.name || (isCat ? 'X6h-0000' : 'Bluetooth Receipt Printer'),
+            model: isCat ? 'Cat / X6 Mini BLE Printer' : 'ESC/POS Bluetooth Thermal',
+            printerType: isCat ? 'x6' : 'x18',
             connectionType: 'bluetooth',
+            protocol: isCat ? 'X6H_BLE' : 'ESC_POS',
             deviceIdentifier: first.address || first.id,
             paperWidth: 58,
             charactersPerLine: 32,
@@ -306,51 +314,76 @@ export class PrinterService {
    * Send a formatted test receipt to verify print head, feeding, and cutter
    */
   static async testPrint(printer: Printer): Promise<{ success: boolean; error?: string; previewText?: string }> {
+    const isX6h = (printer.name || '').toLowerCase().includes('x6') ||
+                  (printer.model || '').toLowerCase().includes('x6') ||
+                  (printer.model || '').toLowerCase().includes('cat') ||
+                  printer.protocol === 'X6H_BLE' ||
+                  printer.printerType === 'x6' ||
+                  printer.printerType === 'cat';
+
     const cols = printer.charactersPerLine || (printer.paperWidth === 58 ? 32 : 48);
     const gen = new EscPosGenerator(cols);
 
-    gen
-      .initialize()
-      .doubleSeparator('=')
-      .setAlignment('center')
-      .setBold(true)
-      .setFontSize(cols >= 48 ? 'double_height' : 'normal')
-      .line('POS PRINTER TEST')
-      .setFontSize('normal')
-      .setBold(false)
-      .doubleSeparator('=')
-      .setAlignment('left')
-      .line(`Printer:  ${printer.name}`)
-      .line(`Model:    ${printer.model}`)
-      .line(`Type:     ${printer.printerType.toUpperCase()} / ${printer.connectionType.toUpperCase()}`);
-
-    if (printer.ipAddress) {
-      gen.line(`IP:       ${printer.ipAddress}`);
-      gen.line(`Port:     ${printer.port || 9100}`);
-    } else if (printer.deviceIdentifier) {
-      gen.line(`Device:   ${printer.deviceIdentifier}`);
-    }
-
-    gen
-      .line(`Paper:    ${printer.paperWidth} mm (${cols} cols)`)
-      .line(`Time:     ${new Date().toLocaleTimeString()}`)
-      .separator('-')
-      .setAlignment('center')
-      .setBold(true)
-      .line('✓ TEST PRINT SUCCESSFUL')
-      .setBold(false)
-      .doubleSeparator('=');
-
-    // Barcode test - only for 80mm desktop printers with verified 1D barcode hardware
-    if (printer.supportsBarcode && printer.paperWidth >= 80) {
-      gen.feed(1).barcode('TEST-9100', 'CODE128');
-    }
-
-    // Cut paper or advance paper past tear bar
-    if (printer.supportsCut && printer.paperWidth >= 80) {
-      gen.cut(false);
+    if (isX6h) {
+      gen
+        .initialize()
+        .doubleSeparator('=')
+        .setAlignment('center')
+        .setBold(true)
+        .line('AURAPOS TEST PRINT')
+        .setBold(false)
+        .doubleSeparator('=')
+        .setAlignment('left')
+        .line(`Printer:  ${printer.name || 'X6h-0000'}`)
+        .line('Protocol: X6H BLE')
+        .line('BLE:      CONNECTED')
+        .line('PRINT TEST: OK')
+        .doubleSeparator('=')
+        .feed(2);
     } else {
-      gen.feed(4);
+      gen
+        .initialize()
+        .doubleSeparator('=')
+        .setAlignment('center')
+        .setBold(true)
+        .setFontSize(cols >= 48 ? 'double_height' : 'normal')
+        .line('POS PRINTER TEST')
+        .setFontSize('normal')
+        .setBold(false)
+        .doubleSeparator('=')
+        .setAlignment('left')
+        .line(`Printer:  ${printer.name}`)
+        .line(`Model:    ${printer.model}`)
+        .line(`Type:     ${printer.printerType.toUpperCase()} / ${printer.connectionType.toUpperCase()}`);
+
+      if (printer.ipAddress) {
+        gen.line(`IP:       ${printer.ipAddress}`);
+        gen.line(`Port:     ${printer.port || 9100}`);
+      } else if (printer.deviceIdentifier) {
+        gen.line(`Device:   ${printer.deviceIdentifier}`);
+      }
+
+      gen
+        .line(`Paper:    ${printer.paperWidth} mm (${cols} cols)`)
+        .line(`Time:     ${new Date().toLocaleTimeString()}`)
+        .separator('-')
+        .setAlignment('center')
+        .setBold(true)
+        .line('✓ TEST PRINT SUCCESSFUL')
+        .setBold(false)
+        .doubleSeparator('=');
+
+      // Barcode test - only for 80mm desktop printers with verified 1D barcode hardware
+      if (printer.supportsBarcode && printer.paperWidth >= 80) {
+        gen.feed(1).barcode('TEST-9100', 'CODE128');
+      }
+
+      // Cut paper or advance paper past tear bar
+      if (printer.supportsCut && printer.paperWidth >= 80) {
+        gen.cut(false);
+      } else {
+        gen.feed(4);
+      }
     }
 
     const payload: PrintPayload = {

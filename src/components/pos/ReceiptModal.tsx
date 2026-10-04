@@ -69,7 +69,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         showToast({
           type: 'success',
           title: t('toasts.printSuccess', 'Receipt Printed'),
-          message: 'ESC/POS commands transmitted to physical printer.'
+          message: t('toasts.receiptDispatched', 'Receipt transmitted to printer.')
         });
       } else {
         // Section 13: Sale remains COMPLETED. Show "Sale completed. Receipt is waiting to print."

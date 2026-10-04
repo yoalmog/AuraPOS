@@ -31,10 +31,11 @@ declare global {
       scanBluetooth: () => string;
       stopBluetoothScan: () => void;
       getPairedBluetoothDevices: () => string;
-      connectBluetooth: (macAddress: String, callbackId: string) => void;
+      connectBluetooth: (macAddress: string, callbackId: string) => void;
       disconnectBluetooth: (macAddress: string) => void;
       requestBluetoothPermissions?: () => void;
       getBluetoothStatus?: () => string;
+      testX6hHardware?: (targetIdentifier: string, callbackId: string) => void;
 
       scanUSB: () => string;
       connectUSB: (deviceName: string, callbackId: string) => void;
@@ -324,12 +325,39 @@ export class NativeBridgeService {
       ipAddress?: string;
       port?: number;
       name?: string;
+      model?: string;
+      protocol?: string;
       paperWidth?: number;
     }): Promise<{ success: boolean; message?: string; error?: string }> => {
-      // Build test receipt using unified EscPosRenderer
       const targetId = printer.connectionType === 'lan' ? (printer.ipAddress || '') : (printer.deviceIdentifier || '');
       if (!targetId) {
         return { success: false, error: 'Printer identifier or IP address is missing.' };
+      }
+
+      if (!NativeBridgeService.isNativeAndroid()) {
+        return {
+          success: false,
+          error: 'Native Android hardware is unavailable in browser preview. Install and run the AuraPOS APK on an Android POS terminal.'
+        };
+      }
+
+      const pName = (printer.name || '').toLowerCase();
+      const pModel = (printer.model || '').toLowerCase();
+      const pProto = (printer.protocol || '').toLowerCase();
+      const isX6h = pName.includes('x6') || pName.includes('cat') || pModel.includes('x6') || pModel.includes('cat') || pProto.includes('x6') || pProto.includes('cat');
+
+      if (isX6h && window.AndroidPOSNative?.testX6hHardware) {
+        try {
+          const res = await NativeBridgeService.callNativeAsync<any>(callbackId => {
+            window.AndroidPOSNative!.testX6hHardware!(targetId, callbackId);
+          });
+          if (res.success) {
+            return { success: true, message: `X6h BLE test receipt printed successfully on ${printer.name || 'X6h-0000'}.` };
+          }
+          return { success: false, error: res.error || 'X6h BLE test print failed.' };
+        } catch (e: any) {
+          return { success: false, error: e?.message || 'X6h BLE test print error.' };
+        }
       }
 
       // Standard ESC/POS test pattern with universal CRLF line endings
@@ -357,6 +385,15 @@ export class NativeBridgeService {
         return { success: true, message: `Test receipt printed successfully on ${printer.name || 'printer'}.` };
       }
       return { success: false, error: res.error || 'Test print transmission failed.' };
+    },
+
+    testX6hHardware: async (targetIdentifier: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.testX6hHardware) {
+        return { success: false, error: 'X6h hardware driver is only available in Native Android mode.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.testX6hHardware!(targetIdentifier, callbackId);
+      });
     },
 
     /**

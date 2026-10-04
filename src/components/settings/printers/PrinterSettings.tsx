@@ -191,11 +191,20 @@ export const PrinterSettings: React.FC = () => {
 
     try {
       const res = await PrinterService.testPrint(printer);
+      const isX6h = (printer.name || '').toLowerCase().includes('x6') ||
+                    (printer.model || '').toLowerCase().includes('x6') ||
+                    (printer.model || '').toLowerCase().includes('cat') ||
+                    printer.protocol === 'X6H_BLE' ||
+                    printer.printerType === 'x6' ||
+                    printer.printerType === 'cat';
+
+      const successMsg = isX6h
+        ? `X6h BLE test receipt transmitted successfully to ${printer.name}. Bitmap raster printed and paper feed completed.`
+        : `ESC/POS test receipt transmitted successfully to ${printer.name}. Paper feed and test sequence completed.`;
+
       setTestResult({
         success: res.success,
-        message: res.success
-          ? `ESC/POS test receipt transmitted successfully to ${printer.name}. Paper feed and test sequence completed.`
-          : res.error || 'Failed to print test receipt',
+        message: res.success ? successMsg : (res.error || 'Failed to print test receipt'),
         previewText: res.previewText
       });
       loadPrinters();

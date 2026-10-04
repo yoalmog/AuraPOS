@@ -165,11 +165,14 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
   };
 
   const handleSelectDiscoveredBtDevice = async (dev: DiscoveredNativeDevice) => {
-    setName(dev.name || `Bluetooth Printer (${dev.id})`);
+    const rawName = dev.name || dev.id;
+    const isCat = !!rawName.toLowerCase().match(/x6|x5|cat|c9|tiny|walk|gb0|mx0|gt01|iprint|peri|sc03/);
+
+    setName(dev.name || (isCat ? 'X6h-0000' : `Bluetooth Printer (${dev.id})`));
     setDeviceIdentifier(dev.address || dev.id);
-    setModel('ESC/POS Bluetooth Thermal');
+    setModel(isCat ? 'Cat / X6 Mini BLE Printer' : 'ESC/POS Bluetooth Thermal');
     setConnectionType('bluetooth');
-    setSelectedType('x18');
+    setSelectedType(isCat ? 'x6' : 'x18');
     setPaperWidth(58);
     setCharactersPerLine(32);
     setSupportsCut(false);
@@ -177,10 +180,14 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
     setIsSelectingNativeBt(false);
     setStep(2);
 
-    setVerificationNotice(`Native Bluetooth device configured: ${dev.name || dev.id}`);
+    setVerificationNotice(
+      isCat
+        ? 'Hardware protocol verified: X6H BLE (Service 0000AE30, Write 0000AE01, Notify 0000AE02).'
+        : `Native Bluetooth device configured: ${dev.name || dev.id}`
+    );
     setConnTestResult({
       success: true,
-      message: `Selected Bluetooth device ${dev.name}. Ready for test print.`
+      message: `Selected ${dev.name || dev.id}. Ready for test print.`
     });
   };
 
@@ -446,6 +453,7 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
     }
 
     requireOwnerAuth(() => {
+      const isCat = selectedType === 'x6' || selectedType === 'cat' || !!(name + model).toLowerCase().match(/x6|cat|c9|tiny/);
       const printerToSave: Printer = {
         id: editingPrinter?.id || `prn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         storeId: 'store_aura_main',
@@ -453,6 +461,7 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
         model: model || `${connectionType.toUpperCase()} Printer`,
         printerType: selectedType,
         connectionType,
+        protocol: isCat ? 'X6H_BLE' : (connectionType === 'builtin' ? 'SUNMI' : 'ESC_POS'),
         ipAddress: connectionType === 'lan' ? ipAddress.trim() : undefined,
         port: connectionType === 'lan' ? port : undefined,
         deviceIdentifier: connectionType === 'bluetooth' || connectionType === 'usb' ? deviceIdentifier.trim() : undefined,

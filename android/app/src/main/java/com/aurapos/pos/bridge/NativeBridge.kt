@@ -241,7 +241,7 @@ class NativeBridge(
             val connLower = connectionType.lowercase()
             val result = when (connLower) {
                 "builtin", "sunmi", "internal" -> builtInPrinterManager.printRaw(rawBytes)
-                "bluetooth", "x18", "cat", "x6", "raster" -> bluetoothManager.printRaw(targetIdentifier, rawBytes, connLower)
+                "bluetooth", "x18", "cat", "x6", "x6h", "x6h_ble", "raster", "ble" -> bluetoothManager.printRaw(targetIdentifier, rawBytes, connLower)
                 "lan", "network", "escpos" -> networkManager.printRaw(targetIdentifier, port, rawBytes)
                 "usb" -> usbManager.printRaw(targetIdentifier, rawBytes)
                 else -> JSONObject().apply {
@@ -250,6 +250,15 @@ class NativeBridge(
                 }
             }
 
+            postCallback(callbackId, result.toString())
+        }
+    }
+
+    @JavascriptInterface
+    fun testX6hHardware(targetIdentifier: String, callbackId: String) {
+        bridgeScope.launch {
+            val testBitmap = bluetoothManager.createX6hTestPrintBitmap()
+            val result = bluetoothManager.printX6hBitmap(targetIdentifier, testBitmap)
             postCallback(callbackId, result.toString())
         }
     }

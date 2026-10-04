@@ -3,9 +3,11 @@
  * Production hardware printers: Real Bluetooth BLE, USB, LAN TCP 9100, and System print
  */
 
-export type PrinterType = 'x18' | 'escpos' | 'browser' | 'usb' | 'builtin' | 'sunmi';
+export type PrinterType = 'x18' | 'x6' | 'cat' | 'escpos' | 'browser' | 'usb' | 'builtin' | 'sunmi';
 
 export type ConnectionType = 'bluetooth' | 'usb' | 'lan' | 'browser' | 'builtin';
+
+export type PrinterProtocolType = 'X6H_BLE' | 'ESC_POS' | 'SUNMI' | 'AUTO';
 
 export type PrinterPurpose = 'receipt' | 'kitchen' | 'bar' | 'label' | 'report' | 'all';
 
@@ -40,6 +42,7 @@ export interface Printer {
   model: string;
   printerType: PrinterType;
   connectionType: ConnectionType;
+  protocol?: PrinterProtocolType;
   ipAddress?: string; // For LAN printers (e.g. 192.168.1.100)
   port?: number; // Default 9100
   deviceIdentifier?: string; // Bluetooth UUID/MAC or USB Vendor/Product ID
