@@ -7,6 +7,7 @@ import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.aurapos.pos.data.LocalDatabaseHelper
 import com.aurapos.pos.hardware.*
 import kotlinx.coroutines.*
@@ -26,6 +27,8 @@ import org.json.JSONObject
  * - printer.disconnectUSB(deviceId)
  * - printer.connectNetwork(ip, port)
  * - printer.testNetwork(ip, port)
+ * - printer.getBuiltInPrinter()
+ * - printer.printViaSystemSpooler(title, content)
  * - barcode.startScanner()
  * - barcode.stopScanner()
  * - cashDrawer.open(printerId)
@@ -37,12 +40,15 @@ class NativeBridge(
     private val bluetoothManager: BluetoothPrinterManager,
     private val networkManager: NetworkPrinterManager,
     private val usbManager: UsbPrinterManager,
+    private val builtInPrinterManager: BuiltInPrinterManager,
     private val cashDrawerManager: CashDrawerManager,
     private val barcodeManager: BarcodeScannerManager,
     private val dbHelper: LocalDatabaseHelper
 ) {
 
     private val bridgeScope = CoroutineScope(Dispatchers.Main + Job())
+
+    private var activeSpoolWebView: WebView? = null
 
     // -------------------------------------------------------------
     // Bluetooth Hardware APIs (Section 5)
@@ -126,6 +132,95 @@ class NativeBridge(
     }
 
     // -------------------------------------------------------------
+    // Integrated / Built-in Terminal Hardware APIs (Sunmi & POS Terminals)
+    // -------------------------------------------------------------
+
+    @JavascriptInterface
+    fun getBuiltInPrinter(): String {
+        val info = builtInPrinterManager.getBuiltInPrinterInfo()
+        return (info ?: JSONObject().apply {
+            put("hasBuiltIn", false)
+        }).toString()
+    }
+
+    // -------------------------------------------------------------
+    // Android System Print Spooler (android.print.PrintManager)
+    // -------------------------------------------------------------
+
+    @JavascriptInterface
+    fun printViaSystemSpooler(title: String, receiptText: String, callbackId: String) {
+        activity.runOnUiThread {
+            try {
+                val printManager = activity.getSystemService(Context.PRINT_SERVICE) as? android.print.PrintManager
+                if (printManager == null) {
+                    val err = JSONObject().apply {
+                        put("success", false)
+                        put("error", "Android PrintManager service is unavailable on this device.")
+                    }
+                    postCallback(callbackId, err.toString())
+                    return@runOnUiThread
+                }
+
+                val spoolWebView = WebView(activity)
+                activeSpoolWebView = spoolWebView
+                spoolWebView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        val printAdapter = spoolWebView.createPrintDocumentAdapter(title)
+                        val printJob = printManager.print(
+                            title,
+                            printAdapter,
+                            android.print.PrintAttributes.Builder()
+                                .setMediaSize(android.print.PrintAttributes.MediaSize.ISO_A4)
+                                .build()
+                        )
+                        val res = JSONObject().apply {
+                            put("success", printJob != null)
+                            if (printJob == null) put("error", "Failed to initialize Android system print spooler.")
+                        }
+                        postCallback(callbackId, res.toString())
+                    }
+                }
+
+                val safeText = receiptText
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+
+                val html = """
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="utf-8">
+                        <title>$title</title>
+                        <style>
+                            @page { margin: 4mm; }
+                            body {
+                                font-family: monospace;
+                                font-size: 11pt;
+                                line-height: 1.35;
+                                white-space: pre-wrap;
+                                margin: 0;
+                                padding: 8px;
+                                color: #000;
+                            }
+                        </style>
+                    </head>
+                    <body>$safeText</body>
+                    </html>
+                """.trimIndent()
+
+                spoolWebView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+            } catch (e: Exception) {
+                val err = JSONObject().apply {
+                    put("success", false)
+                    put("error", "System print spooler error: ${e.localizedMessage}")
+                }
+                postCallback(callbackId, err.toString())
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
     // Unified ESC/POS Raw Printing (Section 9 & 10)
     // -------------------------------------------------------------
 
@@ -143,8 +238,10 @@ class NativeBridge(
                 return@launch
             }
 
-            val result = when (connectionType.lowercase()) {
-                "bluetooth", "x18" -> bluetoothManager.printRaw(targetIdentifier, rawBytes)
+            val connLower = connectionType.lowercase()
+            val result = when (connLower) {
+                "builtin", "sunmi", "internal" -> builtInPrinterManager.printRaw(rawBytes)
+                "bluetooth", "x18", "cat", "x6", "raster" -> bluetoothManager.printRaw(targetIdentifier, rawBytes, connLower)
                 "lan", "network", "escpos" -> networkManager.printRaw(targetIdentifier, port, rawBytes)
                 "usb" -> usbManager.printRaw(targetIdentifier, rawBytes)
                 else -> JSONObject().apply {
@@ -200,30 +297,43 @@ class NativeBridge(
             put("deviceModel", "${Build.MANUFACTURER} ${Build.MODEL}")
             put("bluetoothAvailable", bluetoothManager.isBluetoothEnabled())
             put("networkAvailable", networkManager.isNetworkAvailable())
+            put("hasBuiltInPrinter", builtInPrinterManager.hasBuiltInPrinter())
             put("appVersion", "1.0.0-PROD")
         }.toString()
     }
 
     // -------------------------------------------------------------
-    // Helper Dispatchers to JavaScript
+    // Safe Helper Dispatchers to JavaScript
     // -------------------------------------------------------------
 
     private fun postCallback(callbackId: String, jsonResult: String) {
         activity.runOnUiThread {
-            val js = "window.__AuraPOSNativeCallbacks && window.__AuraPOSNativeCallbacks['$callbackId'] && window.__AuraPOSNativeCallbacks['$callbackId']($jsonResult);"
-            webView.evaluateJavascript(js, null)
+            try {
+                // Safely base64 encode payload to avoid escaping/quote syntax errors in evaluateJavascript
+                val encoded = Base64.encodeToString(jsonResult.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                val js = "try { if (window.__AuraPOSNativeCallbacks && window.__AuraPOSNativeCallbacks['$callbackId']) { window.__AuraPOSNativeCallbacks['$callbackId'](JSON.parse(atob('$encoded'))); } } catch(e) { console.error('Bridge callback delivery error:', e); }"
+                webView.evaluateJavascript(js, null)
+            } catch (e: Exception) {
+                Log.e("NativeBridge", "Error dispatching callback $callbackId: ${e.message}")
+            }
         }
     }
 
     private fun postEventToWebView(eventName: String, jsonPayload: String) {
         activity.runOnUiThread {
-            val js = "window.__AuraPOSEventBus && window.__AuraPOSEventBus.emit('$eventName', $jsonPayload);"
-            webView.evaluateJavascript(js, null)
+            try {
+                val encoded = Base64.encodeToString(jsonPayload.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                val js = "try { if (window.__AuraPOSEventBus) { window.__AuraPOSEventBus.emit('$eventName', atob('$encoded')); } } catch(e) { console.error('Event bus delivery error:', e); }"
+                webView.evaluateJavascript(js, null)
+            } catch (e: Exception) {
+                Log.e("NativeBridge", "Error dispatching event $eventName: ${e.message}")
+            }
         }
     }
 
     fun cleanup() {
         bridgeScope.cancel()
+        builtInPrinterManager.cleanup()
     }
 
     companion object {

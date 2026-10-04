@@ -102,7 +102,8 @@ export class EscPosGenerator {
   }
 
   /**
-   * Append text followed by line feed (LF: 0x0A)
+   * Append text followed by carriage return + line feed (CR LF: 0x0D, 0x0A)
+   * Essential for hardware line buffer flushing on mobile and desktop thermal printers.
    */
   line(str = ''): this {
     if (str) {
@@ -111,7 +112,7 @@ export class EscPosGenerator {
     } else {
       this.previewLines.push('');
     }
-    this.buffer.push(0x0a);
+    this.buffer.push(0x0d, 0x0a);
     return this;
   }
 
@@ -196,13 +197,14 @@ export class EscPosGenerator {
   }
 
   /**
-   * ESC d n (0x1B, 0x64, n) - Print and feed n lines
+   * Print and feed n lines using standard CR LF bytes and optional ESC d
    */
   feed(lines = 1): this {
-    for (let i = 0; i < lines; i++) {
+    const count = Math.max(1, lines);
+    for (let i = 0; i < count; i++) {
       this.previewLines.push('');
+      this.buffer.push(0x0d, 0x0a);
     }
-    this.buffer.push(0x1b, 0x64, Math.max(1, lines));
     return this;
   }
 
@@ -210,8 +212,8 @@ export class EscPosGenerator {
    * GS V m n (0x1D, 0x56, m, n) - Partial or full paper cut
    */
   cut(partial = false): this {
-    // Feed 3 lines before cut so content clears thermal print head
-    this.buffer.push(0x1b, 0x64, 3);
+    // Feed lines before cut so content clears thermal print head
+    this.feed(3);
     // GS V 66 0 = Partial cut with feed; GS V 65 0 = Full cut
     this.buffer.push(0x1d, 0x56, partial ? 0x42 : 0x41, 0x00);
     this.previewLines.push('[--- PAPER CUT ---]');

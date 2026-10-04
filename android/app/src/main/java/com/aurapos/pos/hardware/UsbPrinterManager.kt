@@ -117,19 +117,37 @@ class UsbPrinterManager(private val context: Context) {
         return name ?: "USB Thermal Printer (${device.vendorId}:${device.productId})"
     }
 
+    private fun findUsbDevice(identifier: String): UsbDevice? {
+        val list = usbManager?.deviceList ?: return null
+        if (list.containsKey(identifier)) {
+            return list[identifier]
+        }
+        for ((_, dev) in list) {
+            if (dev.deviceName.equals(identifier, ignoreCase = true) ||
+                identifier.contains("${dev.vendorId}") ||
+                identifier.contains("${dev.productId}")) {
+                return dev
+            }
+        }
+        val printers = list.values.filter { isPrinterDevice(it) }
+        return printers.firstOrNull()
+    }
+
     /**
      * Connect and claim USB printer interface.
      */
     suspend fun connect(deviceName: String): JSONObject = withContext(Dispatchers.IO) {
         val result = JSONObject()
-        val device = usbManager?.deviceList?.get(deviceName)
+        val device = findUsbDevice(deviceName)
 
         if (device == null) {
             result.put("success", false)
             result.put("status", "OFFLINE")
-            result.put("error", "USB device not found: $deviceName")
+            result.put("error", "USB printer device not found or disconnected.")
             return@withContext result
         }
+
+        val actualName = device.deviceName
 
         if (usbManager?.hasPermission(device) != true) {
             requestPermission(device)
@@ -184,6 +202,10 @@ class UsbPrinterManager(private val context: Context) {
 
             activeConnections[deviceName] = connection
             activeEndpoints[deviceName] = targetEndpoint
+            if (actualName != deviceName) {
+                activeConnections[actualName] = connection
+                activeEndpoints[actualName] = targetEndpoint
+            }
 
             // Send ESC @ init
             val init = byteArrayOf(0x1B, 0x40)
@@ -213,8 +235,11 @@ class UsbPrinterManager(private val context: Context) {
 
     suspend fun printRaw(deviceName: String, data: ByteArray): JSONObject = withContext(Dispatchers.IO) {
         val result = JSONObject()
-        var connection = activeConnections[deviceName]
-        var endpoint = activeEndpoints[deviceName]
+        val device = findUsbDevice(deviceName)
+        val actualName = device?.deviceName ?: deviceName
+
+        var connection = activeConnections[deviceName] ?: activeConnections[actualName]
+        var endpoint = activeEndpoints[deviceName] ?: activeEndpoints[actualName]
 
         if (connection == null || endpoint == null) {
             val connRes = connect(deviceName)
@@ -223,8 +248,8 @@ class UsbPrinterManager(private val context: Context) {
                 result.put("error", "USB printer offline: ${connRes.optString("error")}")
                 return@withContext result
             }
-            connection = activeConnections[deviceName]
-            endpoint = activeEndpoints[deviceName]
+            connection = activeConnections[deviceName] ?: activeConnections[actualName]
+            endpoint = activeEndpoints[deviceName] ?: activeEndpoints[actualName]
         }
 
         if (connection == null || endpoint == null) {

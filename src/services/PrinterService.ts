@@ -18,6 +18,8 @@ import { X18BluetoothAdapter } from './printer/adapters/x18BluetoothAdapter.ts';
 import { EscPosNetworkAdapter } from './printer/adapters/escposNetworkAdapter.ts';
 import { X18USBAdapter } from './printer/adapters/x18UsbAdapter.ts';
 import { BrowserPrintAdapter } from './printer/adapters/browserPrintAdapter.ts';
+import { BuiltinPrinterAdapter } from './printer/adapters/builtinPrinterAdapter.ts';
+import { NativeBridgeService } from './native/NativeBridgeService.ts';
 
 // -------------------------------------------------------------
 // BASE ADAPTER INTERFACES
@@ -56,12 +58,20 @@ export class PrinterService {
   private static escPosNetworkAdapter = new EscPosNetworkAdapter();
   private static x18UsbAdapter = new X18USBAdapter();
   private static browserPrintAdapter = new BrowserPrintAdapter();
+  private static builtinPrinterAdapter = new BuiltinPrinterAdapter();
 
   /**
    * Adapter Factory: Resolves the appropriate PrinterAdapter based on printer hardware config.
    * Isolates the rest of the application from underlying protocol specifics.
    */
   static getAdapter(printer: Printer): PrinterAdapter {
+    if (
+      printer.connectionType === 'builtin' ||
+      printer.printerType === 'builtin' ||
+      printer.printerType === 'sunmi'
+    ) {
+      return this.builtinPrinterAdapter;
+    }
     if (printer.printerType === 'x18' || printer.connectionType === 'bluetooth') {
       return this.x18BluetoothAdapter;
     }
@@ -79,7 +89,78 @@ export class PrinterService {
   // -------------------------------------------------------------
 
   static getPrinters(): Printer[] {
-    return StorageService.getPrinters();
+    const list = StorageService.getPrinters();
+    if (list.length > 0) {
+      return list;
+    }
+
+    // Auto-discover and register native hardware printer if running on Android POS
+    if (typeof window !== 'undefined' && NativeBridgeService.isNativeAndroid()) {
+      try {
+        // 1. Built-in Terminal Printer (Sunmi / Handheld POS)
+        const builtIn = NativeBridgeService.printer.getBuiltInPrinter();
+        if (builtIn) {
+          const autoPrn: Printer = {
+            id: 'prn_builtin_auto',
+            storeId: 'store_1',
+            name: builtIn.name || 'Integrated Terminal Printer',
+            model: 'Built-in Thermal Head',
+            printerType: 'builtin',
+            connectionType: 'builtin',
+            paperWidth: 58,
+            charactersPerLine: 32,
+            encoding: 'CP437',
+            isDefault: true,
+            printerPurpose: 'receipt',
+            autoPrint: true,
+            supportsCut: false,
+            supportsCashDrawer: true,
+            supportsQr: false,
+            supportsBarcode: false,
+            status: 'connected',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          StorageService.savePrinter(autoPrn);
+          return [autoPrn];
+        }
+
+        // 2. Paired Bluetooth Devices
+        const paired = NativeBridgeService.printer.getPairedBluetoothDevices();
+        if (paired.length > 0) {
+          const first = paired[0];
+          const isCat = (first.name || '').toLowerCase().match(/x6|x5|cat|c9|tiny|walk|gb0|mx0|iprint|peripage/);
+          const autoPrn: Printer = {
+            id: `prn_bt_${first.address || first.id}`,
+            storeId: 'store_1',
+            name: first.name || 'Bluetooth Receipt Printer',
+            model: isCat ? 'Cat/X6 Mini BLE Printer' : 'ESC/POS Bluetooth Thermal',
+            printerType: 'x18',
+            connectionType: 'bluetooth',
+            deviceIdentifier: first.address || first.id,
+            paperWidth: 58,
+            charactersPerLine: 32,
+            encoding: 'CP437',
+            isDefault: true,
+            printerPurpose: 'receipt',
+            autoPrint: true,
+            supportsCut: false,
+            supportsCashDrawer: false,
+            supportsQr: false,
+            supportsBarcode: false,
+            status: 'connected',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          StorageService.savePrinter(autoPrn);
+          return [autoPrn];
+        }
+      } catch (e) {
+        console.warn('Auto-printer registration error:', e);
+      }
+    }
+
+    return list;
   }
 
   static getPrinterById(id: string): Printer | undefined {
@@ -260,16 +341,16 @@ export class PrinterService {
       .setBold(false)
       .doubleSeparator('=');
 
-    // Barcode test
-    if (printer.supportsBarcode) {
+    // Barcode test - only for 80mm desktop printers with verified 1D barcode hardware
+    if (printer.supportsBarcode && printer.paperWidth >= 80) {
       gen.feed(1).barcode('TEST-9100', 'CODE128');
     }
 
-    // Cut paper if supported
-    if (printer.supportsCut) {
+    // Cut paper or advance paper past tear bar
+    if (printer.supportsCut && printer.paperWidth >= 80) {
       gen.cut(false);
     } else {
-      gen.feed(3);
+      gen.feed(4);
     }
 
     const payload: PrintPayload = {
@@ -527,12 +608,12 @@ export class PrinterService {
 
     gen.separator('-');
 
-    // Barcode / QR Code
-    if (printer.supportsBarcode) {
+    // Barcode / QR Code - only if 80mm paper to avoid crashing 58mm mobile thermal printers
+    if (printer.supportsBarcode && printer.paperWidth >= 80) {
       gen.barcode(sale.receiptNumber, 'CODE128');
     }
 
-    if (printer.supportsQr) {
+    if (printer.supportsQr && printer.paperWidth >= 80) {
       gen.qrCode(`https://pos.store/verify/${sale.receiptNumber}`, 4);
     }
 
@@ -543,11 +624,11 @@ export class PrinterService {
       .line('Please retain this receipt for returns')
       .feed(2);
 
-    // Paper cut
-    if (options?.cutPaper ?? printer.supportsCut) {
+    // Paper cut or clean feed past tear bar
+    if ((options?.cutPaper ?? printer.supportsCut) && printer.paperWidth >= 80) {
       gen.cut(false);
     } else {
-      gen.feed(3);
+      gen.feed(4);
     }
 
     return {

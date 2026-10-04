@@ -3,9 +3,9 @@
  * Production hardware printers: Real Bluetooth BLE, USB, LAN TCP 9100, and System print
  */
 
-export type PrinterType = 'x18' | 'escpos' | 'browser' | 'usb';
+export type PrinterType = 'x18' | 'escpos' | 'browser' | 'usb' | 'builtin' | 'sunmi';
 
-export type ConnectionType = 'bluetooth' | 'usb' | 'lan' | 'browser';
+export type ConnectionType = 'bluetooth' | 'usb' | 'lan' | 'browser' | 'builtin';
 
 export type PrinterPurpose = 'receipt' | 'kitchen' | 'bar' | 'label' | 'report' | 'all';
 

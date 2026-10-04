@@ -57,6 +57,9 @@ declare global {
         callbackId: string
       ) => void;
 
+      getBuiltInPrinter?: () => string;
+      printViaSystemSpooler?: (title: string, receiptText: string, callbackId: string) => void;
+
       startBarcodeScanner: () => void;
       stopBarcodeScanner: () => void;
 
@@ -329,17 +332,18 @@ export class NativeBridgeService {
         return { success: false, error: 'Printer identifier or IP address is missing.' };
       }
 
-      // Standard ESC/POS test pattern
+      // Standard ESC/POS test pattern with universal CRLF line endings
       const testBytes = new Uint8Array([
         0x1B, 0x40, // ESC @ (Init)
         0x1B, 0x61, 0x01, // Center align
-        ...Array.from('*** AURAPOS NATIVE HARDWARE TEST ***\n').map(c => c.charCodeAt(0)),
-        ...Array.from(`Printer: ${printer.name || 'Terminal Thermal'}\n`).map(c => c.charCodeAt(0)),
-        ...Array.from(`Interface: ${printer.connectionType.toUpperCase()}\n`).map(c => c.charCodeAt(0)),
-        ...Array.from(`Timestamp: ${new Date().toLocaleString()}\n`).map(c => c.charCodeAt(0)),
-        ...Array.from('Status: HARDWARE CONNECTED & VERIFIED\n\n').map(c => c.charCodeAt(0)),
-        0x1B, 0x64, 0x03, // Feed 3 lines
-        0x1D, 0x56, 0x41, 0x00 // Partial cut
+        ...Array.from('*** AURAPOS HARDWARE TEST ***\r\n').map(c => c.charCodeAt(0)),
+        ...Array.from(`Printer: ${printer.name || 'Terminal Thermal'}\r\n`).map(c => c.charCodeAt(0)),
+        ...Array.from(`Interface: ${printer.connectionType.toUpperCase()}\r\n`).map(c => c.charCodeAt(0)),
+        ...Array.from(`Width: ${printer.paperWidth || 58}mm\r\n`).map(c => c.charCodeAt(0)),
+        ...Array.from(`Timestamp: ${new Date().toLocaleTimeString()}\r\n`).map(c => c.charCodeAt(0)),
+        ...Array.from('--------------------------------\r\n').map(c => c.charCodeAt(0)),
+        ...Array.from('✓ HARDWARE PRINT SUCCESSFUL!\r\n').map(c => c.charCodeAt(0)),
+        ...Array.from('--------------------------------\r\n\r\n\r\n\r\n').map(c => c.charCodeAt(0))
       ]);
 
       const res = await NativeBridgeService.printer.print(
@@ -353,6 +357,40 @@ export class NativeBridgeService {
         return { success: true, message: `Test receipt printed successfully on ${printer.name || 'printer'}.` };
       }
       return { success: false, error: res.error || 'Test print transmission failed.' };
+    },
+
+    /**
+     * Query integrated built-in POS terminal printer (Sunmi / Handheld POS)
+     */
+    getBuiltInPrinter: (): any | null => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.getBuiltInPrinter) {
+        return null;
+      }
+      try {
+        const raw = window.AndroidPOSNative.getBuiltInPrinter();
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.status === 'ONLINE') {
+          return parsed;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
+
+    /**
+     * Spool receipt via Android Native System PrintManager
+     */
+    printSystemSpooler: async (title: string, receiptText: string): Promise<{ success: boolean; error?: string }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.printViaSystemSpooler) {
+        return {
+          success: false,
+          error: 'Android PrintManager service is not available.'
+        };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.printViaSystemSpooler!(title, receiptText, callbackId);
+      });
     }
   };
 

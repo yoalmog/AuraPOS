@@ -34,6 +34,17 @@
         android:name="android.hardware.bluetooth"
         android:required="false" />
 
+    <!-- Queries for Sunmi and Android print services (Android 11+) -->
+    <queries>
+        <package android:name="woyou.aidlservice.jiuqi" />
+        <intent>
+            <action android:name="woyou.aidlservice.jiuqi.IWoyouService" />
+        </intent>
+        <intent>
+            <action android:name="android.printservice.PrintService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".POSApplication"
         android:allowBackup="true"

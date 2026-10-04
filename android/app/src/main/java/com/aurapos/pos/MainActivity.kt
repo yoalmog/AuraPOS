@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bluetoothManager: BluetoothPrinterManager
     private lateinit var networkManager: NetworkPrinterManager
     private lateinit var usbManager: UsbPrinterManager
+    private lateinit var builtInPrinterManager: BuiltInPrinterManager
     private lateinit var cashDrawerManager: CashDrawerManager
     private lateinit var barcodeManager: BarcodeScannerManager
     private lateinit var dbHelper: LocalDatabaseHelper
@@ -75,6 +76,7 @@ class MainActivity : AppCompatActivity() {
         bluetoothManager = BluetoothPrinterManager(this)
         networkManager = NetworkPrinterManager(this)
         usbManager = UsbPrinterManager(this)
+        builtInPrinterManager = BuiltInPrinterManager(this)
         cashDrawerManager = CashDrawerManager(bluetoothManager, networkManager, usbManager)
         barcodeManager = BarcodeScannerManager(this)
 
@@ -139,6 +141,7 @@ class MainActivity : AppCompatActivity() {
             bluetoothManager,
             networkManager,
             usbManager,
+            builtInPrinterManager,
             cashDrawerManager,
             barcodeManager,
             dbHelper

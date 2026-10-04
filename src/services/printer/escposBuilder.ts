@@ -101,7 +101,7 @@ export class EscPosBuilder {
   }
 
   /**
-   * Appends text with a newline (LF)
+   * Appends text with a newline (CR LF: 0x0D, 0x0A) for universal line buffer flushing
    */
   line(str = ''): this {
     if (str) {
@@ -110,18 +110,19 @@ export class EscPosBuilder {
     } else {
       this.previewLines.push('');
     }
-    this.buffer.push(0x0a); // LF
+    this.buffer.push(0x0d, 0x0a); // CR LF
     return this;
   }
 
   /**
-   * ESC d n - Print and feed n lines
+   * Print and feed n lines
    */
   feed(lines = 1): this {
-    for (let i = 0; i < lines; i++) {
+    const count = Math.max(1, lines);
+    for (let i = 0; i < count; i++) {
       this.previewLines.push('');
+      this.buffer.push(0x0d, 0x0a);
     }
-    this.buffer.push(0x1b, 0x64, Math.max(1, lines));
     return this;
   }
 

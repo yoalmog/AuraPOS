@@ -8,9 +8,11 @@ import {
   PrinterPurpose
 } from '../../types/printer.ts';
 import { PrintService } from '../../services/printer/printService.ts';
+import { PrinterManager } from '../../services/printer/printerManager.ts';
 import { EscPosNetworkAdapter } from '../../services/printer/adapters/escposNetworkAdapter.ts';
 import { X18USBAdapter } from '../../services/printer/adapters/x18UsbAdapter.ts';
 import { BluetoothPrinterService } from '../../services/printer/bluetoothPrinterService.ts';
+import { NativeBridgeService, DiscoveredNativeDevice } from '../../services/native/NativeBridgeService.ts';
 import { IframeBluetoothHelperModal } from './IframeBluetoothHelperModal.tsx';
 import { usePOS } from '../../context/POSContext.tsx';
 import {
@@ -24,7 +26,8 @@ import {
   RefreshCw,
   Play,
   ArrowRight,
-  Usb
+  Usb,
+  Cpu
 } from 'lucide-react';
 
 interface AddPrinterModalProps {
@@ -69,6 +72,8 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
   const [isSearchingBluetooth, setIsSearchingBluetooth] = useState(false);
   const [isSearchingUsb, setIsSearchingUsb] = useState(false);
   const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
+  const [nativeBtDevices, setNativeBtDevices] = useState<DiscoveredNativeDevice[]>([]);
+  const [isSelectingNativeBt, setIsSelectingNativeBt] = useState(false);
 
   // Testing feedback states
   const [isTestingConn, setIsTestingConn] = useState(false);
@@ -79,12 +84,41 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isNative = NativeBridgeService.isNativeAndroid();
+  const builtInInfo = isNative ? NativeBridgeService.printer.getBuiltInPrinter() : null;
+
   // Option 1: Scan Bluetooth Printers (Real discovery & capability verification)
   const handleScanBluetooth = async () => {
     setIsSearchingBluetooth(true);
     setVerificationNotice(null);
     setConnTestResult(null);
 
+    // Native Android Bluetooth Flow
+    if (NativeBridgeService.isNativeAndroid()) {
+      const paired = NativeBridgeService.printer.getPairedBluetoothDevices();
+      if (paired.length > 0) {
+        setNativeBtDevices(paired);
+        setIsSelectingNativeBt(true);
+      }
+
+      const scanRes = NativeBridgeService.printer.scanBluetooth(devs => {
+        setNativeBtDevices(devs);
+      });
+
+      if (!scanRes.success && paired.length === 0) {
+        showToast({
+          type: 'warning',
+          title: 'Bluetooth Notice',
+          message: scanRes.error || 'Bluetooth scan unavailable. Grant Nearby Devices permission.'
+        });
+      } else {
+        setIsSelectingNativeBt(true);
+      }
+      setIsSearchingBluetooth(false);
+      return;
+    }
+
+    // Web Bluetooth BLE Flow
     try {
       const res = await BluetoothPrinterService.scanAndPair();
       if (res.success && res.printer) {
@@ -130,6 +164,26 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
     }
   };
 
+  const handleSelectDiscoveredBtDevice = async (dev: DiscoveredNativeDevice) => {
+    setName(dev.name || `Bluetooth Printer (${dev.id})`);
+    setDeviceIdentifier(dev.address || dev.id);
+    setModel('ESC/POS Bluetooth Thermal');
+    setConnectionType('bluetooth');
+    setSelectedType('x18');
+    setPaperWidth(58);
+    setCharactersPerLine(32);
+    setSupportsCut(false);
+    setSupportsCashDrawer(false);
+    setIsSelectingNativeBt(false);
+    setStep(2);
+
+    setVerificationNotice(`Native Bluetooth device configured: ${dev.name || dev.id}`);
+    setConnTestResult({
+      success: true,
+      message: `Selected Bluetooth device ${dev.name}. Ready for test print.`
+    });
+  };
+
   // Option 2: Add LAN / Network Printer
   const handleSelectLan = () => {
     setSelectedType('escpos');
@@ -147,12 +201,59 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
     setStep(2);
   };
 
-  // Option 3: Add USB Printer (Real WebUSB discovery)
+  // Option 3: Add USB Printer (Native Android USB Host or WebUSB)
   const handleScanUsb = async () => {
     setIsSearchingUsb(true);
     setVerificationNotice(null);
     setConnTestResult(null);
 
+    // Native Android USB Host Flow
+    if (NativeBridgeService.isNativeAndroid()) {
+      const devs = NativeBridgeService.printer.scanUSB();
+      if (devs.length === 0) {
+        showToast({
+          type: 'warning',
+          title: 'No USB Thermal Printer Found',
+          message: 'Please connect your thermal printer via USB OTG cable.'
+        });
+        setIsSearchingUsb(false);
+        return;
+      }
+
+      const dev = devs[0];
+      const connectRes = await NativeBridgeService.printer.connectUSB(dev.id);
+      if (connectRes.success) {
+        setName(dev.name || 'USB Thermal Printer');
+        setDeviceIdentifier(dev.id);
+        setModel('USB Thermal ESC/POS');
+        setConnectionType('usb');
+        setSelectedType('usb');
+        setPaperWidth(58);
+        setCharactersPerLine(32);
+        setStep(2);
+
+        setVerificationNotice(`Native USB printer claimed: ${dev.name}`);
+        setConnTestResult({
+          success: true,
+          message: `USB printer connected and ready.`
+        });
+        showToast({
+          type: 'success',
+          title: 'USB Printer Connected',
+          message: `${dev.name} interface claimed.`
+        });
+      } else {
+        showToast({
+          type: 'warning',
+          title: 'USB Permission Notice',
+          message: connectRes.error || 'Please grant USB permission in the Android dialog.'
+        });
+      }
+      setIsSearchingUsb(false);
+      return;
+    }
+
+    // WebUSB Browser Flow
     try {
       const res = await X18USBAdapter.requestUsbPrinter();
       if (res.success && res.printer) {
@@ -194,21 +295,41 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
     }
   };
 
-  // Option 4: Add System Printer (Browser Print Spooler)
+  // Option 4: Add Integrated Built-in POS Printer (Sunmi / Handheld POS)
+  const handleSelectBuiltIn = () => {
+    const info = NativeBridgeService.printer.getBuiltInPrinter();
+    setSelectedType('builtin');
+    setConnectionType('builtin');
+    setName(info?.name || 'Built-in Terminal Printer');
+    setModel(info?.name || 'Integrated Android POS Thermal Head');
+    setPaperWidth(58);
+    setCharactersPerLine(32);
+    setSupportsCut(false);
+    setSupportsCashDrawer(true);
+    setPurpose('receipt');
+    setVerificationNotice('Uses integrated thermal head driver (Sunmi AIDL / Internal Serial).');
+    setConnTestResult({
+      success: true,
+      message: 'Integrated thermal printer driver online.'
+    });
+    setStep(2);
+  };
+
+  // Option 5: Add System Printer (Android PrintManager / Host OS Spooler)
   const handleSelectBrowser = () => {
     setSelectedType('browser');
     setConnectionType('browser');
-    setName(t('printers.systemPrinterName', 'Host OS Print Spooler'));
-    setModel('Operating System Print Spooler');
+    setName(isNative ? 'Android System Print Spooler' : t('printers.systemPrinterName', 'Host OS Print Spooler'));
+    setModel(isNative ? 'Android Native PrintManager' : 'Operating System Print Spooler');
     setPaperWidth(80);
     setCharactersPerLine(48);
     setSupportsCut(false);
     setSupportsCashDrawer(false);
     setPurpose('report');
-    setVerificationNotice('Uses system OS printer drivers and print dialogue.');
+    setVerificationNotice(isNative ? 'Dispatches receipts through Android System Print dialog.' : 'Uses system OS printer drivers and print dialogue.');
     setConnTestResult({
       success: true,
-      message: 'System print spooler available.'
+      message: isNative ? 'Android PrintManager service ready.' : 'System print spooler available.'
     });
     setStep(2);
   };
@@ -224,7 +345,7 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
     }
   };
 
-  // Real Test Connection Handler
+  // Unified Real Test Connection Handler
   const handleTestConnection = async () => {
     setIsTestingConn(true);
     setConnTestResult(null);
@@ -254,39 +375,25 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
       updatedAt: new Date().toISOString()
     };
 
-    if (connectionType === 'lan') {
-      const adapter = new EscPosNetworkAdapter();
+    try {
+      const adapter = PrinterManager.getAdapter(tempPrinter);
       const res = await adapter.testConnection(tempPrinter);
       setConnTestResult({
         success: res.success,
         message: res.message,
         latency: res.latencyMs
       });
-    } else if (connectionType === 'bluetooth') {
-      const res = await BluetoothPrinterService.testConnection(deviceIdentifier || 'temp');
+    } catch (err: any) {
       setConnTestResult({
-        success: res.success,
-        message: res.message,
-        latency: res.latencyMs
+        success: false,
+        message: err?.message || 'Connection test failed'
       });
-    } else if (connectionType === 'usb') {
-      const adapter = new X18USBAdapter();
-      const res = await adapter.testConnection(tempPrinter);
-      setConnTestResult({
-        success: res.success,
-        message: res.message,
-        latency: res.latencyMs
-      });
-    } else {
-      setConnTestResult({
-        success: true,
-        message: 'System print spooler ready.'
-      });
+    } finally {
+      setIsTestingConn(false);
     }
-    setIsTestingConn(false);
   };
 
-  // Real Test Print Handler
+  // Unified Real Test Print Handler
   const handleTestPrint = async () => {
     setIsTestPrinting(true);
     setPrintTestResult(null);
@@ -316,7 +423,6 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
       updatedAt: new Date().toISOString()
     };
 
-    // Save temporary record so spooler can resolve it
     PrintService.savePrinter(tempPrinter);
     const res = await PrintService.testPrint(tempPrinter.id);
     setPrintTestResult({
@@ -410,113 +516,209 @@ export const AddPrinterModal: React.FC<AddPrinterModalProps> = ({
         {/* STEP 1: METHOD SELECTION (Section 4 & 5) */}
         {step === 1 && (
           <div className="p-6 space-y-4 overflow-y-auto">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              {t('printers.chooseMethod', 'Select Printer Interface')}
-            </h4>
+            {isSelectingNativeBt ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Discovered Bluetooth Printers ({nativeBtDevices.length})
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSelectingNativeBt(false);
+                      handleScanBluetooth();
+                    }}
+                    className="text-xs text-indigo-600 hover:underline flex items-center gap-1 font-semibold"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Rescan
+                  </button>
+                </div>
 
-            <div className="grid grid-cols-1 gap-3">
-              {/* Option 1: Scan Bluetooth Printers */}
-              <button
-                type="button"
-                disabled={isSearchingBluetooth}
-                onClick={handleScanBluetooth}
-                className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/40 text-left transition-all group cursor-pointer disabled:opacity-60"
-              >
-                <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 shrink-0 group-hover:scale-105 transition-transform">
-                  <Bluetooth className={`w-6 h-6 ${isSearchingBluetooth ? 'animate-spin' : ''}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h5 className="text-sm font-bold text-slate-900 group-hover:text-indigo-600">
-                      {isSearchingBluetooth ? 'Scanning for Bluetooth Devices...' : 'Scan Bluetooth Printers'}
-                    </h5>
-                    <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                      Wireless BLE
-                    </span>
+                {nativeBtDevices.length === 0 ? (
+                  <div className="p-6 text-center bg-slate-50 rounded-2xl border border-slate-200">
+                    <Bluetooth className="w-8 h-8 text-slate-400 mx-auto mb-2 animate-pulse" />
+                    <p className="text-xs font-bold text-slate-700">Searching for Nearby Bluetooth Printers...</p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Ensure your Bluetooth thermal printer is turned on and paired in Android Bluetooth settings.
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Direct OS device scan for Bluetooth ESC/POS printers (X18 Mini, POS-58, MPT-II). Connects via GATT with capability verification.
-                  </p>
-                </div>
-                <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-600 transition-colors shrink-0 self-center" />
-              </button>
+                ) : (
+                  <div className="space-y-2">
+                    {nativeBtDevices.map(dev => (
+                      <button
+                        key={dev.id}
+                        type="button"
+                        onClick={() => handleSelectDiscoveredBtDevice(dev)}
+                        className="w-full flex items-center justify-between p-3.5 rounded-xl border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/50 text-left transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-100">
+                            <Bluetooth className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 group-hover:text-indigo-600">
+                              {dev.name || 'Bluetooth Thermal'}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              {dev.address || dev.id} {dev.bonded ? '• Paired' : ''}
+                            </div>
+                          </div>
+                        </div>
+                        <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600" />
+                      </button>
+                    ))}
+                  </div>
+                )}
 
-              {/* Option 2: Add LAN / Network Printer */}
-              <button
-                type="button"
-                onClick={handleSelectLan}
-                className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 text-left transition-all group cursor-pointer"
-              >
-                <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shrink-0 group-hover:scale-105 transition-transform">
-                  <Wifi className="w-6 h-6" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h5 className="text-sm font-bold text-slate-900 group-hover:text-emerald-700">
-                      Add LAN / Network Printer
-                    </h5>
-                    <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                      TCP 9100 / Ethernet
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Connect to a local network thermal printer by IP address and TCP port 9100 (Kitchen, Barista, Front Counter).
-                  </p>
-                </div>
-                <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-emerald-600 transition-colors shrink-0 self-center" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSelectingNativeBt(false)}
+                  className="w-full py-2 text-xs text-slate-500 hover:text-slate-800 font-semibold"
+                >
+                  ← Back to Printer Interfaces
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  {t('printers.chooseMethod', 'Select Printer Interface')}
+                </h4>
 
-              {/* Option 3: Add USB Printer */}
-              <button
-                type="button"
-                disabled={isSearchingUsb}
-                onClick={handleScanUsb}
-                className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-amber-500 hover:bg-amber-50/40 text-left transition-all group cursor-pointer disabled:opacity-60"
-              >
-                <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 group-hover:scale-105 transition-transform">
-                  <Usb className={`w-6 h-6 ${isSearchingUsb ? 'animate-spin' : ''}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h5 className="text-sm font-bold text-slate-900 group-hover:text-amber-700">
-                      {isSearchingUsb ? 'Requesting USB Device...' : 'Add USB Printer'}
-                    </h5>
-                    <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
-                      WebUSB / Cable
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Connect a USB thermal printer directly via USB-C or OTG cable using the browser WebUSB interface.
-                  </p>
-                </div>
-                <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-amber-600 transition-colors shrink-0 self-center" />
-              </button>
+                <div className="grid grid-cols-1 gap-3">
+                  {/* Option 0: Built-in Terminal Printer (Sunmi / Handheld POS) */}
+                  {(isNative || builtInInfo) && (
+                    <button
+                      type="button"
+                      onClick={handleSelectBuiltIn}
+                      className="flex items-start gap-4 p-4 rounded-2xl border border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50 text-left transition-all group cursor-pointer"
+                    >
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-700 shrink-0 group-hover:scale-105 transition-transform">
+                        <Cpu className="w-6 h-6" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h5 className="text-sm font-bold text-slate-900 group-hover:text-emerald-700">
+                            {builtInInfo?.name || 'Built-in / Integrated POS Printer'}
+                          </h5>
+                          <span className="text-[10px] font-bold bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-full">
+                            POS Hardware
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1">
+                          Direct internal thermal printer on Sunmi POS, handheld POS terminals, or serial thermal head.
+                        </p>
+                      </div>
+                      <ArrowRight className="w-5 h-5 text-emerald-600 shrink-0 self-center" />
+                    </button>
+                  )}
 
-              {/* Option 4: Add System Printer */}
-              <button
-                type="button"
-                onClick={handleSelectBrowser}
-                className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/40 text-left transition-all group cursor-pointer"
-              >
-                <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 shrink-0 group-hover:scale-105 transition-transform">
-                  <Monitor className="w-6 h-6" />
+                  {/* Option 1: Scan Bluetooth Printers */}
+                  <button
+                    type="button"
+                    disabled={isSearchingBluetooth}
+                    onClick={handleScanBluetooth}
+                    className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/40 text-left transition-all group cursor-pointer disabled:opacity-60"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 shrink-0 group-hover:scale-105 transition-transform">
+                      <Bluetooth className={`w-6 h-6 ${isSearchingBluetooth ? 'animate-spin' : ''}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h5 className="text-sm font-bold text-slate-900 group-hover:text-indigo-600">
+                          {isSearchingBluetooth ? 'Scanning for Bluetooth Devices...' : 'Scan Bluetooth Printers'}
+                        </h5>
+                        <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                          Wireless BLE / SPP
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Direct OS device scan for Bluetooth ESC/POS printers (X18 Mini, POS-58, MPT-II, Cat thermal).
+                      </p>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-600 transition-colors shrink-0 self-center" />
+                  </button>
+
+                  {/* Option 2: Add LAN / Network Printer */}
+                  <button
+                    type="button"
+                    onClick={handleSelectLan}
+                    className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 text-left transition-all group cursor-pointer"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shrink-0 group-hover:scale-105 transition-transform">
+                      <Wifi className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h5 className="text-sm font-bold text-slate-900 group-hover:text-emerald-700">
+                          Add LAN / Network Printer
+                        </h5>
+                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                          TCP 9100 / Ethernet
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Connect to a local network thermal printer by IP address and TCP port 9100 (Kitchen, Barista, Front Counter).
+                      </p>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-emerald-600 transition-colors shrink-0 self-center" />
+                  </button>
+
+                  {/* Option 3: Add USB Printer */}
+                  <button
+                    type="button"
+                    disabled={isSearchingUsb}
+                    onClick={handleScanUsb}
+                    className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-amber-500 hover:bg-amber-50/40 text-left transition-all group cursor-pointer disabled:opacity-60"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 group-hover:scale-105 transition-transform">
+                      <Usb className={`w-6 h-6 ${isSearchingUsb ? 'animate-spin' : ''}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h5 className="text-sm font-bold text-slate-900 group-hover:text-amber-700">
+                          {isSearchingUsb ? 'Scanning USB Hardware...' : 'Add USB Printer'}
+                        </h5>
+                        <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                          USB OTG / Cable
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Connect a USB thermal printer directly via USB-C or OTG cable using Android USB Host.
+                      </p>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-amber-600 transition-colors shrink-0 self-center" />
+                  </button>
+
+                  {/* Option 4: Add System Printer */}
+                  <button
+                    type="button"
+                    onClick={handleSelectBrowser}
+                    className="flex items-start gap-4 p-4 rounded-2xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/40 text-left transition-all group cursor-pointer"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 shrink-0 group-hover:scale-105 transition-transform">
+                      <Monitor className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h5 className="text-sm font-bold text-slate-900 group-hover:text-blue-600">
+                          {isNative ? 'Android System Print Spooler' : 'Add System Printer'}
+                        </h5>
+                        <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">
+                          {isNative ? 'Android Spooler' : 'OS Spooler'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {isNative
+                          ? 'Prints through Android PrintManager dialog (supports Mopria, Bluetooth/Wi-Fi drivers, and PDF).'
+                          : 'Routes print jobs through your host operating system print dialogue, PDF export, or installed desktop drivers.'}
+                      </p>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-blue-600 transition-colors shrink-0 self-center" />
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h5 className="text-sm font-bold text-slate-900 group-hover:text-blue-600">
-                      Add System Printer
-                    </h5>
-                    <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">
-                      OS Spooler
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Routes print jobs through your host operating system print dialogue, PDF export, or installed desktop drivers.
-                  </p>
-                </div>
-                <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-blue-600 transition-colors shrink-0 self-center" />
-              </button>
-            </div>
+              </div>
+            )}
           </div>
         )}
 

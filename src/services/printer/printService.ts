@@ -590,14 +590,14 @@ export class PrintService {
       .line(settings.receiptFooter || 'Thank you for your business!')
       .line();
 
-    if (printer.supportsBarcode) {
+    if (printer.supportsBarcode && printer.paperWidth >= 80) {
       builder.barcode(sale.receiptNumber, 'CODE128');
     }
 
-    if (printer.supportsCut) {
+    if (printer.supportsCut && printer.paperWidth >= 80) {
       builder.cut(false);
     } else {
-      builder.feed(3);
+      builder.feed(4);
     }
 
     return {
