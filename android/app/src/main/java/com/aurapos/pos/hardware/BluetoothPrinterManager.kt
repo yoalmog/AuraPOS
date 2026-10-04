@@ -1215,51 +1215,6 @@ class BluetoothPrinterManager(private val context: Context) {
     // X6h Packet Protocol & Bitmap Encoder
     // -------------------------------------------------------------
 
-    private fun isX6CatPacket(data: ByteArray): Boolean {
-        return data.size >= 2 && data[0] == 0x51.toByte() && data[1] == 0x78.toByte()
-    }
-
-    /**
-     * Standard CRC-8 Algorithm for 0x5178 Protocol (Polynomial 0x07, Init 0x00)
-     */
-    fun crc8(data: ByteArray): Byte {
-        var crc = 0
-        for (b in data) {
-            crc = crc xor (b.toInt() and 0xFF)
-            for (i in 0 until 8) {
-                if ((crc and 0x80) != 0) {
-                    crc = ((crc shl 1) xor 0x07) and 0xFF
-                } else {
-                    crc = (crc shl 1) and 0xFF
-                }
-            }
-        }
-        return crc.toByte()
-    }
-
-    /**
-     * Constructs a compliant X6h packet:
-     * [0x51] [0x78] [CMD] [0x00] [LEN_LOW] [LEN_HIGH] [PAYLOAD...] [CRC8] [0xFF]
-     */
-    fun buildX6Packet(cmd: Byte, payload: ByteArray): ByteArray {
-        val len = payload.size
-        val lenLow = (len and 0xFF).toByte()
-        val lenHigh = ((len shr 8) and 0xFF).toByte()
-        val crc = crc8(payload)
-
-        val packet = ByteArray(8 + len)
-        packet[0] = 0x51.toByte()
-        packet[1] = 0x78.toByte()
-        packet[2] = cmd
-        packet[3] = 0x00.toByte()
-        packet[4] = lenLow
-        packet[5] = lenHigh
-        System.arraycopy(payload, 0, packet, 6, len)
-        packet[6 + len] = crc
-        packet[7 + len] = 0xFF.toByte()
-        return packet
-    }
-
     /**
      * Builds the complete 8-step X6h print sequence from a monochrome bitmap
      */
@@ -1525,5 +1480,50 @@ class BluetoothPrinterManager(private val context: Context) {
 
     companion object {
         private const val TAG = "BluetoothPrinterManager"
+
+        fun isX6CatPacket(data: ByteArray): Boolean {
+            return data.size >= 2 && data[0] == 0x51.toByte() && data[1] == 0x78.toByte()
+        }
+
+        /*
+         * Standard CRC-8 Algorithm for 0x5178 Protocol (Polynomial 0x07, Init 0x00)
+         */
+        fun crc8(data: ByteArray): Byte {
+            var crc = 0
+            for (b in data) {
+                crc = crc xor (b.toInt() and 0xFF)
+                for (i in 0 until 8) {
+                    if ((crc and 0x80) != 0) {
+                        crc = ((crc shl 1) xor 0x07) and 0xFF
+                    } else {
+                        crc = (crc shl 1) and 0xFF
+                    }
+                }
+            }
+            return crc.toByte()
+        }
+
+        /*
+         * Constructs a compliant X6h packet:
+         * Header (0x51 0x78), Command, 0x00, Len_Low, Len_High, Payload, CRC8, 0xFF
+         */
+        fun buildX6Packet(cmd: Byte, payload: ByteArray): ByteArray {
+            val len = payload.size
+            val lenLow = (len and 0xFF).toByte()
+            val lenHigh = ((len shr 8) and 0xFF).toByte()
+            val crc = crc8(payload)
+
+            val packet = ByteArray(8 + len)
+            packet[0] = 0x51.toByte()
+            packet[1] = 0x78.toByte()
+            packet[2] = cmd
+            packet[3] = 0x00.toByte()
+            packet[4] = lenLow
+            packet[5] = lenHigh
+            System.arraycopy(payload, 0, packet, 6, len)
+            packet[6 + len] = crc
+            packet[7 + len] = 0xFF.toByte()
+            return packet
+        }
     }
 }

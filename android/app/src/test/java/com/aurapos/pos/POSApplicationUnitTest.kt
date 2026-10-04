@@ -1,13 +1,15 @@
 package com.aurapos.pos
 
 import com.aurapos.pos.device.DeviceIdentityManager
+import com.aurapos.pos.hardware.BluetoothPrinterManager
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Unit tests for AuraPOS application logic and device state definitions.
+ * Unit tests for AuraPOS application logic, device state definitions, and hardware protocols.
  */
 class POSApplicationUnitTest {
 
@@ -36,5 +38,33 @@ class POSApplicationUnitTest {
         assertTrue(printerTypes.contains("BLUETOOTH"))
         assertTrue(printerTypes.contains("NETWORK"))
         assertEquals(4, printerTypes.size)
+    }
+
+    @Test
+    fun testX6hPacketFramingAndCrc() {
+        val payload = byteArrayOf(0xE0.toByte(), 0x2E.toByte())
+        val packet = BluetoothPrinterManager.buildX6Packet(0xAF.toByte(), payload)
+
+        // Header: 0x51 0x78
+        assertEquals(0x51.toByte(), packet[0])
+        assertEquals(0x78.toByte(), packet[1])
+        // Command: 0xAF (Set Energy)
+        assertEquals(0xAF.toByte(), packet[2])
+        // Reserved: 0x00
+        assertEquals(0x00.toByte(), packet[3])
+        // Payload Length: 2 (0x02, 0x00)
+        assertEquals(0x02.toByte(), packet[4])
+        assertEquals(0x00.toByte(), packet[5])
+        // Payload: [0xE0, 0x2E]
+        assertEquals(0xE0.toByte(), packet[6])
+        assertEquals(0x2E.toByte(), packet[7])
+        // CRC8
+        val expectedCrc = BluetoothPrinterManager.crc8(payload)
+        assertEquals(expectedCrc, packet[8])
+        // Terminator: 0xFF
+        assertEquals(0xFF.toByte(), packet[9])
+
+        assertEquals(10, packet.size)
+        assertTrue(BluetoothPrinterManager.isX6CatPacket(packet))
     }
 }
