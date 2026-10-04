@@ -40,6 +40,7 @@ export type AppRoute =
   | 'sales'
   | 'products'
   | 'categories'
+  | 'menu-scanner'
   | 'inventory'
   | 'customers'
   | 'employees'

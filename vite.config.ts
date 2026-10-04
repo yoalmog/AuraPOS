@@ -3,6 +3,216 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 import net from 'net';
+import { GoogleGenAI, Type } from '@google/genai';
+
+function menuScannerPlugin(): Plugin {
+  return {
+    name: 'menu-scanner-api',
+    configureServer(server) {
+      server.middlewares.use('/api/menu/analyze', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ success: false, error: 'Method Not Allowed' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk;
+        });
+
+        req.on('end', async () => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const pages: Array<{ dataUrl: string; mimeType?: string }> = parsed.pages || [];
+
+            if (!pages || pages.length === 0) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ success: false, error: 'No menu images provided.' }));
+              return;
+            }
+
+            const apiKey = process.env.GEMINI_API_KEY;
+            if (!apiKey) {
+              res.statusCode = 500;
+              res.end(
+                JSON.stringify({
+                  success: false,
+                  error: 'GEMINI_API_KEY is not configured on the server. Please check your environment configuration.'
+                })
+              );
+              return;
+            }
+
+            const ai = new GoogleGenAI({
+              apiKey,
+              httpOptions: {
+                headers: {
+                  'User-Agent': 'aistudio-build'
+                }
+              }
+            });
+
+            // Prepare inline image parts
+            const imageParts = pages.map((page, idx) => {
+              let cleanBase64 = page.dataUrl;
+              let mime = page.mimeType || 'image/jpeg';
+
+              if (cleanBase64.includes(';base64,')) {
+                const parts = cleanBase64.split(';base64,');
+                const mimeMatch = parts[0].match(/data:(.*?);/);
+                if (mimeMatch && mimeMatch[1]) {
+                  mime = mimeMatch[1];
+                }
+                cleanBase64 = parts[1];
+              }
+
+              return {
+                inlineData: {
+                  mimeType: mime,
+                  data: cleanBase64
+                }
+              };
+            });
+
+            const promptText = `
+You are an expert Restaurant Menu OCR and POS Catalog Structuring Specialist.
+Analyze the provided restaurant/cafe menu page image(s) thoroughly.
+
+CRITICAL INSTRUCTIONS:
+1. Extract EVERY visible category and menu item (food, beverages, desserts, specials, sides, combos, merchandise).
+2. For each category:
+   - Identify or formulate a clear, standardized category name (e.g., "Starters & Appetizers", "Artisan Burgers", "Specialty Coffee & Espresso", "Signature Cocktails", "Pizzas & Flatbreads", "Desserts").
+   - Extract category description/subtitle if present.
+   - Assign an appropriate modern theme color and Lucide icon name (e.g. Coffee, Utensils, Flame, Pizza, Wine, Cake, Salad, Sandwich, Beer, Fish, Cookie, Sparkles).
+3. For each product/item:
+   - Extract the exact Item Name.
+   - Assign it to the correct categoryName.
+   - Extract full description, ingredient list, or preparation notes if present.
+   - Extract the primary numeric price (exclude currency symbols).
+   - If multiple sizes or variants are listed (e.g., "Small $4.50 / Medium $5.50 / Large $6.50", "Single $9 / Double $13", "Half Pint $4 / Pint $7"), extract them into the 'variants' array with their specific prices, and set 'price' to the base/lowest variant price.
+   - If add-ons, extras, or choices are listed (e.g., "Add Avocado +$2.00", "Choice of Dressing: Ranch, Caesar, Vinaigrette", "Choice of Milk: Oat (+0.75), Almond (+0.75), Whole"), extract them into the 'modifiers' array with price deltas.
+   - Detect dietary and specialty flags: isSpicy, isVegetarian, isGlutenFree, isAlcoholic (e.g., if chili icon, V, VG, GF, ABV% appears).
+   - Generate a clean SKU (e.g. "BUR-001", "COF-012").
+4. Deduplicate items if the same section repeats across multiple scanned pages.
+5. If prices are ambiguous or listed in columns, carefully align the price with the corresponding dish or variant.
+6. Provide rich, accurate, clean POS data ready for immediate insertion into the point-of-sale catalog.
+`;
+
+            const response = await ai.models.generateContent({
+              model: 'gemini-3.8-flash',
+              contents: {
+                parts: [...imageParts, { text: promptText }]
+              },
+              config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    menuTitle: { type: Type.STRING, description: 'Restaurant or menu title if visible' },
+                    detectedCurrency: { type: Type.STRING, description: 'Currency symbol or code (e.g. $, €, £, ¥)' },
+                    notes: { type: Type.STRING, description: 'Any special notes, hours, or dietary remarks' },
+                    categories: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          name: { type: Type.STRING, description: 'Category name' },
+                          description: { type: Type.STRING, description: 'Category description' },
+                          color: { type: Type.STRING, description: 'Hex color code' },
+                          iconName: { type: Type.STRING, description: 'Lucide icon name' },
+                          autoPrintKitchen: { type: Type.BOOLEAN, description: 'Whether category items route to kitchen' }
+                        },
+                        required: ['name']
+                      }
+                    },
+                    products: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          name: { type: Type.STRING, description: 'Product name' },
+                          categoryName: { type: Type.STRING, description: 'Category name' },
+                          description: { type: Type.STRING, description: 'Product description' },
+                          price: { type: Type.NUMBER, description: 'Base price as numeric float' },
+                          cost: { type: Type.NUMBER, description: 'Estimated ingredient cost' },
+                          unit: { type: Type.STRING, description: 'Unit: item, glass, cup, portion, etc.' },
+                          sku: { type: Type.STRING, description: 'Generated SKU' },
+                          isSpicy: { type: Type.BOOLEAN },
+                          isVegetarian: { type: Type.BOOLEAN },
+                          isGlutenFree: { type: Type.BOOLEAN },
+                          isAlcoholic: { type: Type.BOOLEAN },
+                          variants: {
+                            type: Type.ARRAY,
+                            items: {
+                              type: Type.OBJECT,
+                              properties: {
+                                name: { type: Type.STRING, description: 'Variant / size name' },
+                                price: { type: Type.NUMBER, description: 'Price for variant' },
+                                sku: { type: Type.STRING }
+                              },
+                              required: ['name', 'price']
+                            }
+                          },
+                          modifiers: {
+                            type: Type.ARRAY,
+                            items: {
+                              type: Type.OBJECT,
+                              properties: {
+                                name: { type: Type.STRING, description: 'Modifier group name' },
+                                required: { type: Type.BOOLEAN },
+                                options: {
+                                  type: Type.ARRAY,
+                                  items: {
+                                    type: Type.OBJECT,
+                                    properties: {
+                                      name: { type: Type.STRING, description: 'Option name' },
+                                      priceDelta: { type: Type.NUMBER, description: 'Price increase' }
+                                    },
+                                    required: ['name', 'priceDelta']
+                                  }
+                                }
+                              },
+                              required: ['name', 'options']
+                            }
+                          }
+                        },
+                        required: ['name', 'categoryName', 'price']
+                      }
+                    }
+                  },
+                  required: ['categories', 'products']
+                }
+              }
+            });
+
+            const textOutput = response.text || '{}';
+            let parsedData;
+            try {
+              parsedData = JSON.parse(textOutput);
+            } catch (e) {
+              parsedData = JSON.parse(textOutput.replace(/```json/g, '').replace(/```/g, '').trim());
+            }
+
+            res.statusCode = 200;
+            res.end(JSON.stringify({ success: true, data: parsedData }));
+          } catch (err: any) {
+            console.error('Menu Scanner AI error:', err);
+            res.statusCode = 500;
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: err?.message || 'Failed to process menu image with AI.'
+              })
+            );
+          }
+        });
+      });
+    }
+  };
+}
 
 function printerBridgePlugin(): Plugin {
   return {
@@ -366,7 +576,7 @@ function categoryApiPlugin(): Plugin {
 export default defineConfig(() => {
   return {
     base: './',
-    plugins: [react(), tailwindcss(), printerBridgePlugin(), categoryApiPlugin()],
+    plugins: [react(), tailwindcss(), printerBridgePlugin(), categoryApiPlugin(), menuScannerPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

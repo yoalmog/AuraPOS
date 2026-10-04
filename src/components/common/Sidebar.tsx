@@ -20,7 +20,8 @@ import {
   PanelLeftOpen,
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Sparkles
 } from 'lucide-react';
 
 interface NavItem {
@@ -28,6 +29,7 @@ interface NavItem {
   labelKey: string;
   defaultLabel: string;
   icon: React.ElementType;
+  badge?: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -35,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'sales', labelKey: 'nav.sales', defaultLabel: 'Sales History', icon: Receipt },
   { id: 'products', labelKey: 'nav.products', defaultLabel: 'Products', icon: Package },
   { id: 'categories', labelKey: 'nav.categories', defaultLabel: 'Categories', icon: FolderTree },
+  { id: 'menu-scanner', labelKey: 'nav.menuScanner', defaultLabel: 'AI Menu Scanner', icon: Sparkles, badge: 'AI' },
   { id: 'inventory', labelKey: 'nav.inventory', defaultLabel: 'Inventory', icon: Layers },
   { id: 'customers', labelKey: 'nav.customers', defaultLabel: 'Customers', icon: Users },
   { id: 'employees', labelKey: 'nav.employees', defaultLabel: 'Employees', icon: UserCheck },
@@ -189,9 +192,14 @@ export const Sidebar: React.FC = () => {
                     isActive ? 'text-white' : 'text-slate-400 group-hover:scale-110'
                   }`}
                 />
-                <span className={`truncate ${isSidebarCollapsed ? 'lg:hidden' : 'block'}`}>
+                <span className={`truncate flex-1 ${isSidebarCollapsed ? 'lg:hidden' : 'block'}`}>
                   {label}
                 </span>
+                {item.badge && !isSidebarCollapsed && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/30 text-blue-300 font-bold border border-blue-400/30">
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}

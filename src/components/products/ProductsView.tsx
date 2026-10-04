@@ -266,7 +266,7 @@ export const ProductsView: React.FC = () => {
   return (
     <div className="flex-1 bg-slate-50 p-6 overflow-y-auto">
       <div className="max-w-7xl mx-auto space-y-5">
-        {/* Navigation Tabs (Products vs Categories - Section 1) */}
+        {/* Navigation Tabs (Products vs Categories vs AI Menu Scanner) */}
         <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
           <button
             type="button"
@@ -290,6 +290,18 @@ export const ProductsView: React.FC = () => {
               {categories.length}
             </span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveRoute('menu-scanner')}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/70 transition-colors"
+          >
+            <Sparkles className="w-4 h-4 text-indigo-600" />
+            <span>AI Menu Scanner</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-bold tracking-wider">
+              NEW
+            </span>
+          </button>
         </div>
 
         {/* Header */}
@@ -302,6 +314,14 @@ export const ProductsView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveRoute('menu-scanner')}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Import from Menu</span>
+            </button>
+
             <button
               onClick={handleExportCSV}
               className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 transition-colors shadow-2xs"

@@ -16,6 +16,7 @@ import { EmployeesView } from './components/employees/EmployeesView.tsx';
 import { ReportsView } from './components/reports/ReportsView.tsx';
 import { DiscountsView } from './components/discounts/DiscountsView.tsx';
 import { SettingsView } from './components/settings/SettingsView.tsx';
+import { MenuScannerView } from './components/menu-scanner/MenuScannerView.tsx';
 
 const POSAppContent: React.FC = () => {
   const { activeRoute, isPinLocked, products, addToCart, showToast } = usePOS();
@@ -65,6 +66,7 @@ const POSAppContent: React.FC = () => {
           {activeRoute === 'sales' && <SalesView />}
           {activeRoute === 'products' && <ProductsView />}
           {activeRoute === 'categories' && <CategoriesView />}
+          {activeRoute === 'menu-scanner' && <MenuScannerView />}
           {activeRoute === 'inventory' && <InventoryView />}
           {activeRoute === 'customers' && <CustomersView />}
           {activeRoute === 'employees' && <EmployeesView />}
