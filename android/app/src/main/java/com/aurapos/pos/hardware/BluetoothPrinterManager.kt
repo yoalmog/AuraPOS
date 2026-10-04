@@ -731,7 +731,7 @@ class BluetoothPrinterManager(private val context: Context) {
                         descriptor.value = cccdValue
 
                         val descWriteInitiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            gatt.writeDescriptor(descriptor, cccdValue) == BluetoothStatusCodes.SUCCESS
+                            gatt.writeDescriptor(descriptor, cccdValue) == 0
                         } else {
                             @Suppress("DEPRECATION")
                             gatt.writeDescriptor(descriptor)
@@ -1432,13 +1432,13 @@ class BluetoothPrinterManager(private val context: Context) {
             characteristic.writeType = writeType
             @Suppress("DEPRECATION")
             val ok = gatt.writeCharacteristic(characteristic)
-            if (ok) BluetoothStatusCodes.SUCCESS else BluetoothStatusCodes.ERROR_UNKNOWN
+            if (ok) 0 else -1
         }
 
         val writeTypeStr = if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) "WRITE_NO_RESPONSE" else "WRITE_DEFAULT"
         Log.d(TAG, "X6H executeSingleGattWrite: char=${characteristic.uuid}, len=${chunk.size}B, writeType=$writeTypeStr, writeInitiatedStatus=$writeInitiatedStatus")
 
-        if (writeInitiatedStatus != BluetoothStatusCodes.SUCCESS) {
+        if (writeInitiatedStatus != 0) {
             pendingWriteDeferreds.remove(macAddress)
             val desc = getGattStatusDescription(writeInitiatedStatus)
             return GattWriteResult(
@@ -1778,13 +1778,10 @@ class BluetoothPrinterManager(private val context: Context) {
                 BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION -> "GATT_INSUFFICIENT_ENCRYPTION (15)"
                 128 -> "GATT_NO_RESOURCES (128)"
                 133 -> "GATT_ERROR_133 (Connection congested / stack timeout)"
+                200 -> "ERROR_GATT_WRITE_NOT_ALLOWED (200)"
+                201 -> "ERROR_GATT_WRITE_REQUEST_BUSY (201)"
                 257 -> "GATT_FAILURE (257)"
-                BluetoothStatusCodes.SUCCESS -> "SUCCESS (0)"
-                BluetoothStatusCodes.ERROR_UNKNOWN -> "ERROR_UNKNOWN"
-                BluetoothStatusCodes.ERROR_PROFILE_SERVICE_NOT_BOUND -> "ERROR_PROFILE_SERVICE_NOT_BOUND"
-                BluetoothStatusCodes.ERROR_FEATURE_NOT_CONFIGURED -> "ERROR_FEATURE_NOT_CONFIGURED"
-                BluetoothStatusCodes.ERROR_GATT_WRITE_NOT_ALLOWED -> "ERROR_GATT_WRITE_NOT_ALLOWED"
-                BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY -> "ERROR_GATT_WRITE_REQUEST_BUSY"
+                -1 -> "GATT_WRITE_FAILED (-1)"
                 else -> "GATT_STATUS_$status"
             }
         }
