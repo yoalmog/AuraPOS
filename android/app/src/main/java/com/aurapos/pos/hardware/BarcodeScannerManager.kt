@@ -70,7 +70,7 @@ class BarcodeScannerManager(private val context: Context) {
         if (isListening) {
             try {
                 context.unregisterReceiver(scanReceiver)
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
             isListening = false
             onBarcodeScannedCallback = null
         }

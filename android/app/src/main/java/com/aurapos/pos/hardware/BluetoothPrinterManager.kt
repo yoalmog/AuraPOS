@@ -189,7 +189,7 @@ class BluetoothPrinterManager(private val context: Context) {
     fun isBluetoothEnabled(): Boolean {
         return try {
             bluetoothAdapter?.isEnabled == true
-        } catch (_: SecurityException) {
+        } catch (e: SecurityException) {
             false
         }
     }
@@ -287,7 +287,7 @@ class BluetoothPrinterManager(private val context: Context) {
                 bluetoothAdapter?.cancelDiscovery()
             }
             bluetoothAdapter?.bluetoothLeScanner?.stopScan(bleScanCallback)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
         isScanning = false
     }
 
@@ -304,7 +304,7 @@ class BluetoothPrinterManager(private val context: Context) {
                     allDevices[device.address] = device
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
 
         for ((_, device) in allDevices) {
             try {
@@ -363,7 +363,7 @@ class BluetoothPrinterManager(private val context: Context) {
 
         // 1. Direct MAC match if valid format (e.g. 00:11:22:33:44:55)
         if (BluetoothAdapter.checkBluetoothAddress(identifier)) {
-            return try { adapter.getRemoteDevice(identifier) } catch (_: Exception) { null }
+            return try { adapter.getRemoteDevice(identifier) } catch (e: Exception) { null }
         }
 
         // 2. Lookup in discovered / bonded map
@@ -379,7 +379,7 @@ class BluetoothPrinterManager(private val context: Context) {
                     return dev
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
 
         return null
     }
@@ -431,7 +431,7 @@ class BluetoothPrinterManager(private val context: Context) {
         }
 
         val macAddress = device.address
-        val devName = try { device.name ?: "Printer ($macAddress)" } catch (_: Exception) { "Printer ($macAddress)" }
+        val devName = try { device.name ?: "Printer ($macAddress)" } catch (e: Exception) { "Printer ($macAddress)" }
 
         // Stop scanning to preserve bandwidth
         stopScan()
@@ -464,7 +464,7 @@ class BluetoothPrinterManager(private val context: Context) {
             Log.d(TAG, "Connected to $devName via standard secure SPP UUID.")
         } catch (eA: Exception) {
             Log.w(TAG, "Secure SPP failed: ${eA.message}. Trying Insecure SPP...")
-            try { socket?.close() } catch (_: Exception) {}
+            try { socket?.close() } catch (e: Exception) {}
             socket = null
         }
 
@@ -478,7 +478,7 @@ class BluetoothPrinterManager(private val context: Context) {
                 Log.d(TAG, "Connected to $devName via insecure SPP UUID.")
             } catch (eB: Exception) {
                 Log.w(TAG, "Insecure SPP failed: ${eB.message}. Trying reflection channel 1...")
-                try { socket?.close() } catch (_: Exception) {}
+                try { socket?.close() } catch (e: Exception) {}
                 socket = null
             }
         }
@@ -494,7 +494,7 @@ class BluetoothPrinterManager(private val context: Context) {
                 Log.d(TAG, "Connected to $devName via reflection channel 1.")
             } catch (eC: Exception) {
                 Log.w(TAG, "Reflection channel 1 failed: ${eC.message}.")
-                try { socket?.close() } catch (_: Exception) {}
+                try { socket?.close() } catch (e: Exception) {}
                 socket = null
             }
         }
@@ -507,7 +507,7 @@ class BluetoothPrinterManager(private val context: Context) {
             try {
                 outputStream.write(byteArrayOf(0x1B, 0x40)) // ESC @
                 outputStream.flush()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
 
             result.put("success", true)
             result.put("status", "ONLINE")
@@ -559,7 +559,7 @@ class BluetoothPrinterManager(private val context: Context) {
                     activeGatts.remove(macAddress)
                     activeGattWriteChars.remove(macAddress)
                     activeGattNotifyChars.remove(macAddress)
-                    try { gatt.close() } catch (_: Exception) {}
+                    try { gatt.close() } catch (e: Exception) {}
 
                     val pending = pendingWriteDeferreds.remove(macAddress)
                     pending?.complete(false)
@@ -676,7 +676,7 @@ class BluetoothPrinterManager(private val context: Context) {
                                     descDeferred.await()
                                 }
                                 Log.i(TAG, "X6H: notifications enabled")
-                            } catch (_: Exception) {
+                            } catch (e: Exception) {
                                 Log.w(TAG, "X6H: notification descriptor write timed out, continuing")
                             }
                             x6hStateMap[macAddress] = X6hPrinterState.READY
@@ -774,7 +774,7 @@ class BluetoothPrinterManager(private val context: Context) {
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     activeGatts.remove(macAddress)
                     activeGattWriteChars.remove(macAddress)
-                    try { gatt.close() } catch (_: Exception) {}
+                    try { gatt.close() } catch (e: Exception) {}
                     if (!completer.isCompleted) completer.complete(false)
                 }
             }
@@ -828,7 +828,7 @@ class BluetoothPrinterManager(private val context: Context) {
 
         val success = try {
             withTimeout(5000L) { completer.await() }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             activeGattWriteChars[macAddress] != null
         }
 
@@ -1205,7 +1205,7 @@ class BluetoothPrinterManager(private val context: Context) {
             withTimeout(3000L) {
                 deferred.await()
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             pendingWriteDeferreds.remove(macAddress)
             false
         }
@@ -1517,7 +1517,7 @@ class BluetoothPrinterManager(private val context: Context) {
     fun cleanup() {
         try {
             context.unregisterReceiver(discoveryReceiver)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
         stopScan()
         activeSockets.keys.toList().forEach { disconnect(it) }
         activeGatts.keys.toList().forEach { disconnect(it) }

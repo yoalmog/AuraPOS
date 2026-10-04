@@ -72,7 +72,7 @@ class NetworkPrinterManager(private val context: Context) {
         } finally {
             try {
                 socket?.close()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
 
         result
@@ -113,7 +113,7 @@ class NetworkPrinterManager(private val context: Context) {
             try {
                 outputStream?.close()
                 socket?.close()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
 
         result

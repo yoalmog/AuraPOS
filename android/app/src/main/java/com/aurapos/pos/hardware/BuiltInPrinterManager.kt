@@ -200,7 +200,7 @@ class BuiltInPrinterManager(private val context: Context) {
             try {
                 context.unbindService(sunmiConnection)
                 isSunmiBound = false
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
     }
 }

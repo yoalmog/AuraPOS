@@ -287,13 +287,13 @@ class UsbPrinterManager(private val context: Context) {
         try {
             activeConnections.remove(deviceName)?.close()
             activeEndpoints.remove(deviceName)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     fun cleanup() {
         try {
             context.unregisterReceiver(usbReceiver)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
         activeConnections.keys.toList().forEach { disconnect(it) }
     }
 
