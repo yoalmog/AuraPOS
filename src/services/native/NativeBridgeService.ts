@@ -36,6 +36,8 @@ declare global {
       requestBluetoothPermissions?: () => void;
       getBluetoothStatus?: () => string;
       testX6hHardware?: (targetIdentifier: string, callbackId: string) => void;
+      testBleWrite?: (targetIdentifier: string, callbackId: string) => void;
+      getGattDiagnostic?: (targetIdentifier: string, callbackId: string) => void;
 
       scanUSB: () => string;
       connectUSB: (deviceName: string, callbackId: string) => void;
@@ -393,6 +395,24 @@ export class NativeBridgeService {
       }
       return NativeBridgeService.callNativeAsync(callbackId => {
         window.AndroidPOSNative!.testX6hHardware!(targetIdentifier, callbackId);
+      });
+    },
+
+    testBleWrite: async (targetIdentifier: string): Promise<{ success: boolean; message?: string; error?: string; statusCode?: number; statusDescription?: string; writeType?: string; bytesSent?: number; characteristic?: string }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.testBleWrite) {
+        return { success: false, error: 'BLE write diagnostic is only available in Native Android mode.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.testBleWrite!(targetIdentifier, callbackId);
+      });
+    },
+
+    getGattDiagnostic: async (targetIdentifier: string): Promise<{ success: boolean; diagnostic?: any; error?: string }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.getGattDiagnostic) {
+        return { success: false, error: 'GATT diagnostic inspection is only available in Native Android mode.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.getGattDiagnostic!(targetIdentifier, callbackId);
       });
     },
 

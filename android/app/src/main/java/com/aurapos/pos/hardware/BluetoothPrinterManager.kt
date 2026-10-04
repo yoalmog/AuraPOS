@@ -61,11 +61,20 @@ enum class X6hPrinterState {
     DISCONNECTED_DURING_PRINT
 }
 
+data class GattWriteResult(
+    val success: Boolean,
+    val statusCode: Int = 0,
+    val statusDescription: String = "SUCCESS",
+    val writeTypeUsed: Int = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+    val bytesWritten: Int = 0,
+    val errorMessage: String? = null
+)
+
 /**
  * Production-grade Bluetooth Hardware Driver for AuraPOS
  *
- * Distinct Support for:
- * 1. X6h / X6 / Cat / C9 / WalkPrint / TinyPrint BLE Thermal Printers (0000AE30 service, 0x5178 Protocol, 0xBE Drawing Mode, 384-dot raster LSB-first)
+ * Dedicated Support for:
+ * 1. X6h / X6 / Cat / WalkPrint / TinyPrint BLE Thermal Printers (0000AE30 service, 0x5178 Protocol, 0xBE Drawing Mode, 384-dot raster LSB-first)
  * 2. Standard ESC/POS Bluetooth Thermal Printers (X18 Mini, POS-58, MPT-II, PT-210, Rongta, Epson) via RFCOMM SPP & Generic BLE GATT
  */
 class BluetoothPrinterManager(private val context: Context) {
@@ -85,18 +94,21 @@ class BluetoothPrinterManager(private val context: Context) {
     private val activeGatts = ConcurrentHashMap<String, BluetoothGatt>()
     private val activeGattWriteChars = ConcurrentHashMap<String, BluetoothGattCharacteristic>()
     private val activeGattNotifyChars = ConcurrentHashMap<String, BluetoothGattCharacteristic>()
+    private val activeGattWriteType = ConcurrentHashMap<String, Int>()
     private val gattWriteMutexes = ConcurrentHashMap<String, Mutex>()
-    private val pendingWriteDeferreds = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val pendingWriteDeferreds = ConcurrentHashMap<String, CompletableDeferred<GattWriteResult>>()
     private val pendingDescriptorDeferreds = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
     private val activeMtuMap = ConcurrentHashMap<String, Int>()
     private val x6hStateMap = ConcurrentHashMap<String, X6hPrinterState>()
+    private val lastGattStatusMap = ConcurrentHashMap<String, Int>()
+    private val diagnosticInfoMap = ConcurrentHashMap<String, JSONObject>()
 
     // Discovered devices during active scan
     private val discoveredDevices = ConcurrentHashMap<String, BluetoothDevice>()
     private var isScanning = false
     private var discoveryCallback: ((String) -> Unit)? = null
 
-    // UUIDs
+    // UUID Constants
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
@@ -105,16 +117,9 @@ class BluetoothPrinterManager(private val context: Context) {
     val X6H_WRITE_CHAR_UUID: UUID = UUID.fromString("0000AE01-0000-1000-8000-00805F9B34FB")
     val X6H_NOTIFY_CHAR_UUID: UUID = UUID.fromString("0000AE02-0000-1000-8000-00805F9B34FB")
 
-    // Other known ESC/POS BLE Characteristic UUIDs
+    // Other known ESC/POS BLE Characteristic UUID substrings
     private val KNOWN_GENERIC_BLE_WRITE_UUIDS = listOf(
-        "0000ffe1", // Standard Chinese 58mm BLE (X18, POS-58, MPT-II)
-        "00002af1", // Generic ESC/POS BLE
-        "0000ff02", // POS-58 BLE
-        "0000fee1", // WeChat / Xunwei
-        "0000fec7", // Xunwei alternate
-        "e7810a71", // PT-210
-        "49535343", // ISSC transparent UART
-        "6e400002"  // Nordic NUS RX
+        "ae01", "ffe1", "ff02", "2af1", "fee1", "fec7", "e7810a71", "e7810a72", "49535343", "6e400002"
     )
 
     // -------------------------------------------------------------
@@ -260,10 +265,6 @@ class BluetoothPrinterManager(private val context: Context) {
                 val settings = ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                     .build()
-                val filters = listOf(
-                    ScanFilter.Builder().setServiceUuid(ParcelUuid(X6H_SERVICE_UUID)).build()
-                )
-                // Scan broadly without strict filters to discover all nearby BLE printers
                 bleScanner.startScan(null, settings, bleScanCallback)
             }
         } catch (e: Exception) {
@@ -361,17 +362,14 @@ class BluetoothPrinterManager(private val context: Context) {
     fun resolveBluetoothDevice(identifier: String): BluetoothDevice? {
         val adapter = bluetoothAdapter ?: return null
 
-        // 1. Direct MAC match if valid format (e.g. 00:11:22:33:44:55)
         if (BluetoothAdapter.checkBluetoothAddress(identifier)) {
             return try { adapter.getRemoteDevice(identifier) } catch (e: Exception) { null }
         }
 
-        // 2. Lookup in discovered / bonded map
         if (discoveredDevices.containsKey(identifier)) {
             return discoveredDevices[identifier]
         }
 
-        // 3. Match by name or partial MAC in bonded devices
         try {
             adapter.bondedDevices?.forEach { dev ->
                 if (dev.address.equals(identifier, ignoreCase = true) ||
@@ -384,9 +382,6 @@ class BluetoothPrinterManager(private val context: Context) {
         return null
     }
 
-    /**
-     * Determines whether the target printer is an X6 / X6h / Cat / TinyPrint microcontroller BLE printer
-     */
     fun isX6CatPrinter(identifier: String): Boolean {
         val dev = resolveBluetoothDevice(identifier)
         val name = (dev?.name ?: identifier).lowercase()
@@ -433,29 +428,21 @@ class BluetoothPrinterManager(private val context: Context) {
         val macAddress = device.address
         val devName = try { device.name ?: "Printer ($macAddress)" } catch (e: Exception) { "Printer ($macAddress)" }
 
-        // Stop scanning to preserve bandwidth
         stopScan()
-
-        // Disconnect any stale sessions
         disconnect(macAddress)
 
         val isCat = isX6CatPrinter(macAddress)
         Log.i(TAG, "Connecting to $devName ($macAddress) | isX6hCat=$isCat...")
 
-        // =========================================================
-        // PATHWAY 1: Dedicated X6h BLE GATT Driver
-        // =========================================================
+        // Pathway 1: Dedicated X6h BLE GATT Driver
         if (isCat) {
             return@withContext connectX6hBle(device, devName)
         }
 
-        // =========================================================
-        // PATHWAY 2: Standard ESC/POS Bluetooth Thermal (RFCOMM SPP)
-        // =========================================================
+        // Pathway 2: Standard ESC/POS Bluetooth Thermal (RFCOMM SPP)
         var socket: BluetoothSocket? = null
         var socketConnected = false
 
-        // 1. Standard Secure SPP
         try {
             val s = device.createRfcommSocketToServiceRecord(SPP_UUID)
             withTimeout(3500L) { s.connect() }
@@ -468,7 +455,6 @@ class BluetoothPrinterManager(private val context: Context) {
             socket = null
         }
 
-        // 2. Insecure SPP
         if (!socketConnected) {
             try {
                 val s = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
@@ -483,7 +469,6 @@ class BluetoothPrinterManager(private val context: Context) {
             }
         }
 
-        // 3. Reflection Channel 1
         if (!socketConnected) {
             try {
                 val method = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
@@ -519,50 +504,73 @@ class BluetoothPrinterManager(private val context: Context) {
             return@withContext result
         }
 
-        // Fallback to BLE GATT for standard ESC/POS BLE printers if RFCOMM failed
         return@withContext connectGenericBleGatt(device, devName)
     }
 
     /**
-     * Dedicated X6h BLE Driver Connection Routine
+     * Dedicated X6h BLE Driver Connection & Full Service/Characteristic Inspection
      */
     @SuppressLint("MissingPermission")
     private suspend fun connectX6hBle(device: BluetoothDevice, devName: String): JSONObject {
         val result = JSONObject()
         val macAddress = device.address
 
-        Log.d(TAG, "X6H: connecting to $devName ($macAddress)...")
+        Log.i(TAG, "==================================================")
+        Log.i(TAG, "X6H: Initiating BLE GATT connection to $devName ($macAddress)")
+        Log.i(TAG, "==================================================")
         x6hStateMap[macAddress] = X6hPrinterState.CONNECTING
 
         val readyDeferred = CompletableDeferred<Boolean>()
         val mutex = Mutex()
         gattWriteMutexes[macAddress] = mutex
 
+        val diagJson = JSONObject().apply {
+            put("device", devName)
+            put("mac", macAddress)
+            put("transport", "BLE / GATT")
+            put("gattState", "CONNECTING")
+            put("mtu", 23)
+            put("services", JSONArray())
+            put("selectedWriteChar", "")
+            put("selectedWriteProperties", JSONArray())
+            put("selectedWriteType", "")
+            put("selectedNotifyChar", "")
+            put("notificationsStatus", "PENDING")
+            put("state", "CONNECTING")
+        }
+        diagnosticInfoMap[macAddress] = diagJson
+
         val gattCallback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                lastGattStatusMap[macAddress] = status
+                Log.i(TAG, "X6H onConnectionStateChange: status=$status (${getGattStatusDescription(status)}), newState=$newState")
+
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Log.i(TAG, "X6H: connected")
+                    Log.i(TAG, "X6H: GATT CONNECTED to $devName ($macAddress)")
                     activeGatts[macAddress] = gatt
                     x6hStateMap[macAddress] = X6hPrinterState.DISCOVERING_SERVICES
+                    diagJson.put("gattState", "CONNECTED")
 
-                    // Request higher MTU for fast, reliable raster transfers (247 bytes)
+                    // Request higher MTU (247) on supported Android versions
                     try {
                         val requested = gatt.requestMtu(247)
-                        Log.d(TAG, "X6H: MTU request initiated (result=$requested)")
+                        Log.i(TAG, "X6H: MTU 247 requested (initiated=$requested)")
                     } catch (e: Exception) {
-                        Log.w(TAG, "X6H: requestMtu error: ${e.message}, proceeding to service discovery")
+                        Log.w(TAG, "X6H: requestMtu failed: ${e.message}, proceeding immediately to service discovery")
                         gatt.discoverServices()
                     }
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.w(TAG, "X6H: disconnected (status=$status)")
+                    Log.w(TAG, "X6H: GATT DISCONNECTED (status=$status: ${getGattStatusDescription(status)})")
                     x6hStateMap[macAddress] = X6hPrinterState.DISCONNECTED
+                    diagJson.put("gattState", "DISCONNECTED (status $status)")
+                    diagJson.put("state", "DISCONNECTED")
                     activeGatts.remove(macAddress)
                     activeGattWriteChars.remove(macAddress)
                     activeGattNotifyChars.remove(macAddress)
                     try { gatt.close() } catch (e: Exception) {}
 
                     val pending = pendingWriteDeferreds.remove(macAddress)
-                    pending?.complete(false)
+                    pending?.complete(GattWriteResult(false, status, getGattStatusDescription(status), errorMessage = "GATT disconnected during operation"))
 
                     val pendingDesc = pendingDescriptorDeferreds.remove(macAddress)
                     pendingDesc?.complete(false)
@@ -575,136 +583,207 @@ class BluetoothPrinterManager(private val context: Context) {
 
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
                 activeMtuMap[macAddress] = mtu
-                Log.i(TAG, "X6H: MTU = $mtu (status=$status)")
-                Log.d(TAG, "X6H: discovering services")
+                diagJson.put("mtu", mtu)
+                Log.i(TAG, "X6H onMtuChanged: MTU negotiated = $mtu, status = $status (${getGattStatusDescription(status)}), max ATT payload = ${maxOf(20, mtu - 3)}")
+                Log.i(TAG, "X6H: Proceeding to discover services...")
                 gatt.discoverServices()
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                lastGattStatusMap[macAddress] = status
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    Log.e(TAG, "X6H: service discovery failed with status $status")
+                    Log.e(TAG, "X6H onServicesDiscovered: Failed with status $status (${getGattStatusDescription(status)})")
                     x6hStateMap[macAddress] = X6hPrinterState.ERROR
+                    diagJson.put("state", "SERVICE_DISCOVERY_ERROR ($status)")
                     if (!readyDeferred.isCompleted) readyDeferred.complete(false)
                     return
                 }
 
-                Log.d(TAG, "X6H: services discovered successfully")
-                var serviceAE30: BluetoothGattService? = null
-                var writeCharAE01: BluetoothGattCharacteristic? = null
-                var notifyCharAE02: BluetoothGattCharacteristic? = null
+                Log.i(TAG, "==================================================")
+                Log.i(TAG, "X6H GATT SERVICE DISCOVERY: ${gatt.services.size} services discovered for $devName ($macAddress)")
+                Log.i(TAG, "==================================================")
 
-                // 1. Look for AE30 service specifically
+                val servicesArray = JSONArray()
+                var writeCharCandidate: BluetoothGattCharacteristic? = null
+                var notifyCharCandidate: BluetoothGattCharacteristic? = null
+
+                // Complete Service & Characteristic Logging (Task 2 & Task 3)
                 for (service in gatt.services) {
-                    val uuidStr = service.uuid.toString().uppercase()
-                    if (uuidStr.contains("AE30")) {
-                        serviceAE30 = service
-                        Log.i(TAG, "X6H: AE30 service found (${service.uuid})")
-                        break
+                    val sUuidStr = service.uuid.toString().uppercase()
+                    Log.i(TAG, "SERVICE: $sUuidStr")
+                    val sObj = JSONObject().apply {
+                        put("uuid", sUuidStr)
+                        put("characteristics", JSONArray())
                     }
-                }
 
-                // If not under AE30, scan all services for AE01/AE02 characteristics
-                val searchServices = if (serviceAE30 != null) listOf(serviceAE30) else gatt.services
-
-                for (service in searchServices) {
                     for (ch in service.characteristics) {
-                        val chUuid = ch.uuid.toString().uppercase()
-                        if (chUuid.contains("AE01")) {
-                            writeCharAE01 = ch
-                            Log.i(TAG, "X6H: AE01 write characteristic found (${ch.uuid})")
-                        } else if (chUuid.contains("AE02")) {
-                            notifyCharAE02 = ch
-                            Log.i(TAG, "X6H: AE02 notify characteristic found (${ch.uuid})")
-                        }
-                    }
-                }
+                        val chUuidStr = ch.uuid.toString().uppercase()
+                        val props = ch.properties
+                        val propStrings = getPropertyStrings(props)
+                        val propFormatted = propStrings.joinToString(", ")
 
-                // Fallback for generic BLE characteristics if AE01 is not found
-                if (writeCharAE01 == null) {
-                    for (service in gatt.services) {
-                        for (ch in service.characteristics) {
-                            val isWritable = (ch.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) ||
-                                             (ch.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
-                            if (isWritable) {
-                                writeCharAE01 = ch
-                                Log.i(TAG, "X6H: generic write characteristic fallback found: ${ch.uuid}")
-                                break
+                        Log.i(TAG, "  CHARACTERISTIC: $chUuidStr")
+                        Log.i(TAG, "    PROPERTIES ($props): [$propFormatted]")
+
+                        val chObj = JSONObject().apply {
+                            put("uuid", chUuidStr)
+                            put("properties", propFormatted)
+                            put("rawProperties", props)
+                            put("canWrite", (props and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0)
+                            put("canWriteNoResponse", (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0)
+                            put("canNotify", (props and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0)
+                            put("canIndicate", (props and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0)
+                        }
+                        sObj.getJSONArray("characteristics").put(chObj)
+
+                        // 1. Identify Write Characteristic
+                        val isWritable = (props and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) ||
+                                         (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
+
+                        if (isWritable) {
+                            if (chUuidStr.contains("AE01")) {
+                                writeCharCandidate = ch
+                                Log.i(TAG, "    -> MATCHED PRIORITY 1 X6H WRITE CHAR: $chUuidStr")
+                            } else if (writeCharCandidate == null || !writeCharCandidate.uuid.toString().uppercase().contains("AE01")) {
+                                if (KNOWN_GENERIC_BLE_WRITE_UUIDS.any { chUuidStr.lowercase().contains(it) }) {
+                                    writeCharCandidate = ch
+                                    Log.i(TAG, "    -> MATCHED KNOWN THERMAL WRITE CHAR: $chUuidStr")
+                                } else if (writeCharCandidate == null) {
+                                    writeCharCandidate = ch
+                                    Log.i(TAG, "    -> FOUND GENERIC WRITABLE CHAR CANDIDATE: $chUuidStr")
+                                }
                             }
                         }
-                        if (writeCharAE01 != null) break
-                    }
-                }
 
-                if (writeCharAE01 == null) {
-                    Log.e(TAG, "X6H: write characteristic not found")
+                        // 2. Identify Notify / Read Characteristic
+                        val isNotifiable = (props and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) ||
+                                           (props and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0)
+
+                        if (isNotifiable) {
+                            if (chUuidStr.contains("AE02")) {
+                                notifyCharCandidate = ch
+                                Log.i(TAG, "    -> MATCHED PRIORITY 1 X6H NOTIFY CHAR: $chUuidStr")
+                            } else if (notifyCharCandidate == null || !notifyCharCandidate.uuid.toString().uppercase().contains("AE02")) {
+                                notifyCharCandidate = ch
+                                Log.i(TAG, "    -> FOUND NOTIFY CHAR CANDIDATE: $chUuidStr")
+                            }
+                        }
+                    }
+                    servicesArray.put(sObj)
+                }
+                diagJson.put("services", servicesArray)
+                Log.i(TAG, "==================================================")
+
+                if (writeCharCandidate == null) {
+                    Log.e(TAG, "X6H: No writable GATT characteristic discovered on $devName ($macAddress)!")
                     x6hStateMap[macAddress] = X6hPrinterState.ERROR
+                    diagJson.put("state", "ERROR_NO_WRITE_CHARACTERISTIC")
                     if (!readyDeferred.isCompleted) readyDeferred.complete(false)
                     return
                 }
 
-                activeGattWriteChars[macAddress] = writeCharAE01
-                if (notifyCharAE02 != null) {
-                    activeGattNotifyChars[macAddress] = notifyCharAE02
+                // Determine and configure write type (Task 3 & Task 6)
+                val writeProps = writeCharCandidate.properties
+                val canWriteDefault = (writeProps and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+                val canWriteNoResp = (writeProps and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+
+                val selectedWriteType = when {
+                    canWriteNoResp && !canWriteDefault -> BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    canWriteDefault && !canWriteNoResp -> BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    canWriteNoResp && canWriteDefault -> BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE // Prefer NO_RESPONSE for high-throughput thermal data
+                    else -> BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                }
+
+                activeGattWriteChars[macAddress] = writeCharCandidate
+                activeGattWriteType[macAddress] = selectedWriteType
+
+                val writeTypeStr = if (selectedWriteType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) "WRITE_NO_RESPONSE" else "WRITE_DEFAULT"
+                Log.i(TAG, "X6H SELECTED WRITE CHAR: ${writeCharCandidate.uuid}")
+                Log.i(TAG, "X6H SELECTED WRITE PROPERTIES: [${getPropertyStrings(writeProps).joinToString(", ")}]")
+                Log.i(TAG, "X6H SELECTED WRITE TYPE: $writeTypeStr")
+
+                diagJson.put("selectedWriteChar", writeCharCandidate.uuid.toString())
+                diagJson.put("selectedWriteProperties", JSONArray(getPropertyStrings(writeProps)))
+                diagJson.put("selectedWriteType", writeTypeStr)
+
+                if (notifyCharCandidate != null) {
+                    activeGattNotifyChars[macAddress] = notifyCharCandidate
+                    diagJson.put("selectedNotifyChar", notifyCharCandidate.uuid.toString())
+                    Log.i(TAG, "X6H SELECTED NOTIFY CHAR: ${notifyCharCandidate.uuid}")
                 }
 
                 x6hStateMap[macAddress] = X6hPrinterState.CONFIGURING
 
-                // 2. Enable Notifications on AE02
-                if (notifyCharAE02 != null) {
-                    val setNotifOk = gatt.setCharacteristicNotification(notifyCharAE02, true)
-                    Log.d(TAG, "X6H: setCharacteristicNotification result: $setNotifOk")
+                // Configure notifications via CCCD (Task 10)
+                if (notifyCharCandidate != null) {
+                    val notifSet = gatt.setCharacteristicNotification(notifyCharCandidate, true)
+                    Log.i(TAG, "X6H: setCharacteristicNotification result: $notifSet")
 
-                    val descriptor = notifyCharAE02.getDescriptor(CCCD_UUID)
+                    val descriptor = notifyCharCandidate.getDescriptor(CCCD_UUID)
                     if (descriptor != null) {
                         val descDeferred = CompletableDeferred<Boolean>()
                         pendingDescriptorDeferreds[macAddress] = descDeferred
 
-                        @Suppress("DEPRECATION")
-                        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        val isIndicate = (notifyCharCandidate.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
+                        val cccdValue = if (isIndicate) BluetoothGattDescriptor.ENABLE_INDICATION_VALUE else BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
 
-                        val descWriteOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
+                        @Suppress("DEPRECATION")
+                        descriptor.value = cccdValue
+
+                        val descWriteInitiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            gatt.writeDescriptor(descriptor, cccdValue) == BluetoothStatusCodes.SUCCESS
                         } else {
                             @Suppress("DEPRECATION")
                             gatt.writeDescriptor(descriptor)
                         }
-                        Log.d(TAG, "X6H: writeDescriptor CCCD initiated: $descWriteOk")
+                        Log.i(TAG, "X6H: writeDescriptor CCCD initiated: $descWriteInitiated")
 
                         CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                withTimeout(2000L) {
-                                    descDeferred.await()
-                                }
-                                Log.i(TAG, "X6H: notifications enabled")
+                            val descSuccess = try {
+                                withTimeout(2000L) { descDeferred.await() }
                             } catch (e: Exception) {
-                                Log.w(TAG, "X6H: notification descriptor write timed out, continuing")
+                                Log.w(TAG, "X6H: CCCD descriptor write timed out or bypassed, continuing...")
+                                false
                             }
+                            val notifStatusStr = if (descSuccess) "ENABLED" else "CONFIGURED_WITHOUT_ACK"
+                            diagJson.put("notificationsStatus", notifStatusStr)
+                            diagJson.put("state", "READY")
                             x6hStateMap[macAddress] = X6hPrinterState.READY
-                            Log.i(TAG, "X6H: printer READY")
+                            Log.i(TAG, "X6H: Driver is fully READY for $devName ($macAddress)")
                             if (!readyDeferred.isCompleted) readyDeferred.complete(true)
                         }
                         return
+                    } else {
+                        diagJson.put("notificationsStatus", "NO_CCCD_DESCRIPTOR")
                     }
+                } else {
+                    diagJson.put("notificationsStatus", "NO_NOTIFY_CHAR")
                 }
 
+                diagJson.put("state", "READY")
                 x6hStateMap[macAddress] = X6hPrinterState.READY
-                Log.i(TAG, "X6H: printer READY")
+                Log.i(TAG, "X6H: Driver is fully READY for $devName ($macAddress)")
                 if (!readyDeferred.isCompleted) readyDeferred.complete(true)
             }
 
             override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-                Log.d(TAG, "X6H: onDescriptorWrite status=$status")
+                lastGattStatusMap[macAddress] = status
+                Log.i(TAG, "X6H onDescriptorWrite: descriptor=${descriptor.uuid}, status=$status (${getGattStatusDescription(status)})")
                 val deferred = pendingDescriptorDeferreds.remove(macAddress)
                 deferred?.complete(status == BluetoothGatt.GATT_SUCCESS)
             }
 
             override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                lastGattStatusMap[macAddress] = status
+                val desc = getGattStatusDescription(status)
+                Log.d(TAG, "X6H onCharacteristicWrite: char=${characteristic.uuid}, status=$status ($desc)")
+
                 val deferred = pendingWriteDeferreds.remove(macAddress)
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    deferred?.complete(true)
+                    deferred?.complete(GattWriteResult(success = true, statusCode = status, statusDescription = desc, writeTypeUsed = characteristic.writeType))
                 } else {
-                    Log.w(TAG, "X6H: onCharacteristicWrite failed with status $status")
-                    deferred?.complete(false)
+                    Log.e(TAG, "X6H onCharacteristicWrite FAILED: status=$status ($desc)")
+                    deferred?.complete(GattWriteResult(success = false, statusCode = status, statusDescription = desc, writeTypeUsed = characteristic.writeType, errorMessage = "GATT write failed with status $status ($desc)"))
                 }
             }
 
@@ -738,10 +817,13 @@ class BluetoothPrinterManager(private val context: Context) {
         }
 
         if (!isReady || x6hStateMap[macAddress] != X6hPrinterState.READY) {
+            val lastStatus = lastGattStatusMap[macAddress] ?: -1
             disconnect(macAddress)
             result.put("success", false)
             result.put("status", "OFFLINE")
-            result.put("error", "Could not establish X6h BLE GATT channel. Ensure printer is powered on and within range.")
+            result.put("gattStatus", lastStatus)
+            result.put("gattStatusDesc", getGattStatusDescription(lastStatus))
+            result.put("error", "Could not establish X6h BLE GATT channel (Status: $lastStatus - ${getGattStatusDescription(lastStatus)}). Ensure printer is powered on and within range.")
             return result
         }
 
@@ -753,7 +835,8 @@ class BluetoothPrinterManager(private val context: Context) {
         result.put("name", devName)
         result.put("address", macAddress)
         result.put("mtu", finalMtu)
-        result.put("message", "X6h BLE thermal printer connected and READY.")
+        result.put("diagnostic", diagJson)
+        result.put("message", "X6h BLE thermal printer connected, services discovered, and READY.")
         return result
     }
 
@@ -813,6 +896,12 @@ class BluetoothPrinterManager(private val context: Context) {
 
                     if (foundChar != null) {
                         activeGattWriteChars[macAddress] = foundChar
+                        val writeType = if ((foundChar.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
+                            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                        } else {
+                            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                        }
+                        activeGattWriteType[macAddress] = writeType
                         if (!completer.isCompleted) completer.complete(true)
                     } else {
                         if (!completer.isCompleted) completer.complete(false)
@@ -851,15 +940,18 @@ class BluetoothPrinterManager(private val context: Context) {
     }
 
     private fun handleX6hNotifyBytes(macAddress: String, data: ByteArray) {
+        if (data.isEmpty()) return
+        val hex = data.joinToString(" ") { "%02X".format(it) }
+        Log.i(TAG, "X6H NOTIFY received from $macAddress: [$hex] (${data.size} bytes)")
+
         if (data.size >= 4 && data[0] == 0x51.toByte() && data[1] == 0x78.toByte()) {
             val cmd = data[2].toInt() and 0xFF
-            Log.d(TAG, "X6H: notification status received (cmd=0x${cmd.toString(16)}, len=${data.size})")
-            if (cmd == 0xA3) {
-                // Device State response
+            Log.d(TAG, "X6H ACK for Command: 0x%02X".format(cmd))
+            if (cmd == 0xA3) { // Status response
                 val isPaperPresent = if (data.size > 6) (data[6].toInt() and 0x01) == 0 else true
                 if (!isPaperPresent) {
                     x6hStateMap[macAddress] = X6hPrinterState.PAPER_OUT
-                    Log.w(TAG, "X6H: status notification: PAPER OUT!")
+                    Log.w(TAG, "X6H: PAPER OUT detected on $macAddress")
                 }
             }
         }
@@ -867,23 +959,123 @@ class BluetoothPrinterManager(private val context: Context) {
 
     fun disconnect(macAddress: String) {
         try {
-            activeStreams.remove(macAddress)?.close()
             activeSockets.remove(macAddress)?.close()
-        } catch (e: IOException) {
-            Log.w(TAG, "Error closing Bluetooth socket for $macAddress: ${e.message}")
-        }
-        try {
+            activeStreams.remove(macAddress)?.close()
+            val gatt = activeGatts.remove(macAddress)
             activeGattWriteChars.remove(macAddress)
             activeGattNotifyChars.remove(macAddress)
-            activeMtuMap.remove(macAddress)
-            gattWriteMutexes.remove(macAddress)
-            val gatt = activeGatts.remove(macAddress)
-            gatt?.disconnect()
-            gatt?.close()
+            activeGattWriteType.remove(macAddress)
+            pendingWriteDeferreds.remove(macAddress)?.complete(GattWriteResult(false, errorMessage = "Disconnected"))
+            pendingDescriptorDeferreds.remove(macAddress)?.complete(false)
+            if (gatt != null) {
+                try {
+                    gatt.disconnect()
+                    gatt.close()
+                } catch (e: Exception) {}
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Error closing BLE GATT for $macAddress: ${e.message}")
+            Log.w(TAG, "Error disconnecting $macAddress: ${e.message}")
         }
         x6hStateMap[macAddress] = X6hPrinterState.DISCONNECTED
+    }
+
+    // -------------------------------------------------------------
+    // Diagnostic APIs (TEST A, TEST B, TEST C)
+    // -------------------------------------------------------------
+
+    /**
+     * TEST A: Comprehensive BLE Diagnostic
+     * Connects, discovers all services, inspects all characteristics, checks properties & MTU
+     */
+    suspend fun getGattDiagnosticJson(targetAddress: String): JSONObject = withContext(Dispatchers.IO) {
+        val device = resolveBluetoothDevice(targetAddress)
+        val macAddress = device?.address ?: targetAddress
+
+        if (!isDeviceConnected(macAddress)) {
+            val conn = connect(macAddress)
+            if (!conn.optBoolean("success", false)) {
+                return@withContext JSONObject().apply {
+                    put("success", false)
+                    put("mac", macAddress)
+                    put("error", conn.optString("error", "GATT connection failed"))
+                }
+            }
+        }
+
+        val diag = diagnosticInfoMap[macAddress] ?: JSONObject().apply {
+            put("mac", macAddress)
+            put("device", device?.name ?: "Unknown")
+            put("state", getX6hState(macAddress).name)
+            put("mtu", activeMtuMap[macAddress] ?: 23)
+        }
+
+        JSONObject().apply {
+            put("success", true)
+            put("diagnostic", diag)
+        }
+    }
+
+    /**
+     * TEST B: Minimal BLE 1-Packet Write Test (Task 7 & Task 14)
+     * Sends ONE single small valid packet (Set Energy 0xAF: 10 bytes) to verify GATT write handshake
+     */
+    suspend fun testBleWrite(targetAddress: String): JSONObject = withContext(Dispatchers.IO) {
+        val result = JSONObject()
+        val device = resolveBluetoothDevice(targetAddress)
+        val macAddress = device?.address ?: targetAddress
+
+        if (!isDeviceConnected(macAddress)) {
+            Log.i(TAG, "TEST B: Auto-connecting to $macAddress before 1-packet test...")
+            val conn = connect(macAddress)
+            if (!conn.optBoolean("success", false)) {
+                result.put("success", false)
+                result.put("test", "TEST_B_BLE_WRITE")
+                result.put("error", "Connection failed: ${conn.optString("error")}")
+                return@withContext result
+            }
+        }
+
+        val gatt = activeGatts[macAddress]
+        val writeChar = activeGattWriteChars[macAddress]
+
+        if (gatt == null || writeChar == null) {
+            result.put("success", false)
+            result.put("test", "TEST_B_BLE_WRITE")
+            result.put("error", "X6h BLE GATT channel is not ready. Write characteristic missing.")
+            return@withContext result
+        }
+
+        val mutex = gattWriteMutexes.getOrPut(macAddress) { Mutex() }
+
+        // Construct 1 minimal valid X6h packet: Set Energy (0xAF) to 12000 (0x2EE0)
+        val singleTestPacket = buildX6Packet(0xAF.toByte(), byteArrayOf(0xE0.toByte(), 0x2E.toByte()))
+        Log.i(TAG, "TEST B: Transmitting 1 minimal packet (${singleTestPacket.size}B) to ${writeChar.uuid}")
+
+        val writeRes: GattWriteResult = mutex.withLock {
+            writeGattChunkWithAck(gatt, writeChar, singleTestPacket, macAddress)
+        }
+
+        if (writeRes.success) {
+            Log.i(TAG, "TEST B PASSED: 1-packet BLE write accepted by Android GATT (${singleTestPacket.size}B)")
+            result.put("success", true)
+            result.put("test", "TEST_B_BLE_WRITE")
+            result.put("statusCode", writeRes.statusCode)
+            result.put("statusDescription", writeRes.statusDescription)
+            result.put("writeType", if (writeRes.writeTypeUsed == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) "WRITE_NO_RESPONSE" else "WRITE_DEFAULT")
+            result.put("bytesSent", singleTestPacket.size)
+            result.put("characteristic", writeChar.uuid.toString())
+            result.put("message", "TEST B SUCCESS: 1-packet BLE write (${singleTestPacket.size}B) successfully accepted by Android GATT (${writeRes.statusDescription}).")
+        } else {
+            Log.e(TAG, "TEST B FAILED: ${writeRes.errorMessage}")
+            result.put("success", false)
+            result.put("test", "TEST_B_BLE_WRITE")
+            result.put("statusCode", writeRes.statusCode)
+            result.put("statusDescription", writeRes.statusDescription)
+            result.put("characteristic", writeChar.uuid.toString())
+            result.put("error", "TEST B FAILED: ${writeRes.errorMessage}")
+        }
+
+        return@withContext result
     }
 
     // -------------------------------------------------------------
@@ -905,7 +1097,6 @@ class BluetoothPrinterManager(private val context: Context) {
         val forceEscPos = overrideLower == "escpos" || overrideLower == "esc_pos"
         val isCat = if (forceCat) true else if (forceEscPos) false else (isX6CatPrinter(macAddress) || isX6CatPacket(data))
 
-        // Ensure connected
         if (!isDeviceConnected(macAddress)) {
             Log.i(TAG, "Connection inactive. Auto-connecting to $macAddress (isX6=$isCat)...")
             val connRes = connect(macAddress)
@@ -924,15 +1115,7 @@ class BluetoothPrinterManager(private val context: Context) {
     }
 
     /**
-     * Complete X6h BLE 8-Step Printing Sequence
-     * 1. Initialize printer (Lattice Start 0xA6)
-     * 2. Set print quality (0xA4) / energy (0xAF: 12000 = 0x2EE0)
-     * 3. Set print speed (0xBD: 0x19)
-     * 4. Enter drawing / image mode (0xBE: 0x00)
-     * 5. Send image data (0xA2 with 48 bytes per line, 384 dots, LSB-first)
-     * 6. Finish image transmission (Lattice End 0xA6)
-     * 7. Feed paper (0xA1: 100 steps)
-     * 8. End print job
+     * Complete X6h BLE 8-Step Printing Sequence (TEST C: Full Physical Print)
      */
     @SuppressLint("MissingPermission")
     private suspend fun printX6hBleJob(macAddress: String, data: ByteArray): JSONObject {
@@ -950,9 +1133,8 @@ class BluetoothPrinterManager(private val context: Context) {
 
         try {
             x6hStateMap[macAddress] = X6hPrinterState.PRINTING
-            Log.d(TAG, "X6H: starting print job on $macAddress")
+            Log.i(TAG, "X6H: Starting physical print job on $macAddress (char=${writeChar.uuid})")
 
-            // 1. Prepare packets
             val packetsToSend: List<ByteArray> = if (isX6CatPacket(data)) {
                 listOf(data)
             } else {
@@ -963,7 +1145,7 @@ class BluetoothPrinterManager(private val context: Context) {
 
             val negotiatedMtu = activeMtuMap[macAddress] ?: 23
             val maxPayloadPerWrite = maxOf(20, minOf(negotiatedMtu - 3, 244))
-            Log.d(TAG, "X6H: negotiated MTU=$negotiatedMtu, writeChunkSize=$maxPayloadPerWrite, totalPackets=${packetsToSend.size}")
+            Log.i(TAG, "X6H: MTU=$negotiatedMtu, writeChunkSize=$maxPayloadPerWrite, totalPackets=${packetsToSend.size}")
 
             var totalBytesWritten = 0
             var chunkIndex = 0
@@ -977,20 +1159,18 @@ class BluetoothPrinterManager(private val context: Context) {
                         System.arraycopy(packet, offset, chunk, 0, len)
                         chunkIndex++
 
-                        // Reliable BLE write with onCharacteristicWrite callback acknowledgment
-                        val writeSuccess = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
-                        if (!writeSuccess) {
-                            Log.w(TAG, "X6H: write retry on chunk $chunkIndex")
+                        val writeRes = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
+                        if (!writeRes.success) {
+                            Log.w(TAG, "X6H: Retry write on chunk $chunkIndex due to ${writeRes.errorMessage}")
                             delay(50)
-                            val retryOk = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
-                            if (!retryOk) {
-                                throw IOException("GATT write characteristic failed at packet $pktIdx, offset $offset")
+                            val retryRes = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
+                            if (!retryRes.success) {
+                                throw IOException("GATT write failed at packet $pktIdx, offset $offset (Status: ${retryRes.statusCode} - ${retryRes.statusDescription}) [${retryRes.errorMessage}]")
                             }
                         }
 
                         offset += len
                         totalBytesWritten += len
-                        Log.d(TAG, "X6H: chunk $chunkIndex written (${len}B)")
                         delay(12)
                     }
                     delay(15)
@@ -998,18 +1178,18 @@ class BluetoothPrinterManager(private val context: Context) {
             }
 
             x6hStateMap[macAddress] = X6hPrinterState.COMPLETED
-            Log.i(TAG, "X6H: print job completed ($totalBytesWritten bytes transmitted)")
+            Log.i(TAG, "X6H: Physical print job successfully completed ($totalBytesWritten bytes transmitted)")
 
             result.put("success", true)
             result.put("status", "COMPLETED")
             result.put("bytesPrinted", totalBytesWritten)
             result.put("protocol", "X6H_BLE")
             result.put("transport", "BLE_GATT")
-            result.put("message", "X6h BLE print job completed successfully.")
+            result.put("message", "X6h BLE print job completed successfully ($totalBytesWritten bytes transmitted).")
             return result
         } catch (e: Exception) {
             x6hStateMap[macAddress] = X6hPrinterState.ERROR
-            Log.e(TAG, "X6H: print job error on $macAddress: ${e.message}")
+            Log.e(TAG, "X6H: Print job error on $macAddress: ${e.message}")
             result.put("success", false)
             result.put("error", "X6h transmission failed: ${e.localizedMessage}")
             return result
@@ -1047,7 +1227,7 @@ class BluetoothPrinterManager(private val context: Context) {
 
         try {
             x6hStateMap[macAddress] = X6hPrinterState.PRINTING
-            Log.d(TAG, "X6H: starting bitmap print job on $macAddress")
+            Log.i(TAG, "X6H: Starting bitmap print job on $macAddress (${packets.size} packets)")
 
             val negotiatedMtu = activeMtuMap[macAddress] ?: 23
             val maxPayloadPerWrite = maxOf(20, minOf(negotiatedMtu - 3, 244))
@@ -1064,12 +1244,13 @@ class BluetoothPrinterManager(private val context: Context) {
                         System.arraycopy(packet, offset, chunk, 0, len)
                         chunkIndex++
 
-                        val writeSuccess = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
-                        if (!writeSuccess) {
+                        val writeRes = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
+                        if (!writeRes.success) {
+                            Log.w(TAG, "X6H: Retry write on chunk $chunkIndex due to ${writeRes.errorMessage}")
                             delay(50)
-                            val retryOk = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
-                            if (!retryOk) {
-                                throw IOException("GATT write failed at packet $pktIdx, offset $offset")
+                            val retryRes = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
+                            if (!retryRes.success) {
+                                throw IOException("GATT write failed at packet $pktIdx, offset $offset (Status: ${retryRes.statusCode} - ${retryRes.statusDescription}) [${retryRes.errorMessage}]")
                             }
                         }
 
@@ -1082,18 +1263,18 @@ class BluetoothPrinterManager(private val context: Context) {
             }
 
             x6hStateMap[macAddress] = X6hPrinterState.COMPLETED
-            Log.i(TAG, "X6H: print job completed ($totalBytesWritten bytes transmitted)")
+            Log.i(TAG, "X6H: Bitmap print job completed ($totalBytesWritten bytes transmitted)")
 
             result.put("success", true)
             result.put("status", "COMPLETED")
             result.put("bytesPrinted", totalBytesWritten)
             result.put("protocol", "X6H_BLE")
             result.put("transport", "BLE_GATT")
-            result.put("message", "X6h BLE bitmap print job completed successfully.")
+            result.put("message", "X6h BLE bitmap print job completed successfully ($totalBytesWritten bytes transmitted).")
             return@withContext result
         } catch (e: Exception) {
             x6hStateMap[macAddress] = X6hPrinterState.ERROR
-            Log.e(TAG, "X6H: bitmap print error on $macAddress: ${e.message}")
+            Log.e(TAG, "X6H: Bitmap print error on $macAddress: ${e.message}")
             result.put("success", false)
             result.put("error", "X6h transmission failed: ${e.localizedMessage}")
             return@withContext result
@@ -1146,8 +1327,8 @@ class BluetoothPrinterManager(private val context: Context) {
                     val len = minOf(bleChunkSize, bytesToSend.size - offset)
                     val chunk = ByteArray(len)
                     System.arraycopy(bytesToSend, offset, chunk, 0, len)
-                    val writeOk = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
-                    if (!writeOk) {
+                    val writeRes = writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
+                    if (!writeRes.success) {
                         delay(25)
                         writeGattChunkWithAck(gatt, writeChar, chunk, macAddress)
                     }
@@ -1173,7 +1354,7 @@ class BluetoothPrinterManager(private val context: Context) {
     }
 
     /**
-     * Performs a single GATT characteristic write and waits for onCharacteristicWrite callback
+     * Performs a single GATT characteristic write with dynamic write-type support, status tracking, and fallback
      */
     @SuppressLint("MissingPermission")
     private suspend fun writeGattChunkWithAck(
@@ -1181,34 +1362,122 @@ class BluetoothPrinterManager(private val context: Context) {
         characteristic: BluetoothGattCharacteristic,
         chunk: ByteArray,
         macAddress: String
-    ): Boolean {
-        val deferred = CompletableDeferred<Boolean>()
-        pendingWriteDeferreds[macAddress] = deferred
+    ): GattWriteResult {
+        val props = characteristic.properties
+        val canWriteDefault = (props and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+        val canWriteNoResp = (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
 
-        val writeInitiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(characteristic, chunk, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
+        if (!canWriteDefault && !canWriteNoResp) {
+            return GattWriteResult(
+                success = false,
+                errorMessage = "Characteristic ${characteristic.uuid} has no WRITE or WRITE_NO_RESPONSE property (props=$props: [${getPropertyStrings(props).joinToString(", ")}])"
+            )
+        }
+
+        // Primary Write Type selection
+        val preferredType = activeGattWriteType[macAddress] ?: if (canWriteNoResp) {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        }
+
+        val primaryResult = executeSingleGattWrite(gatt, characteristic, chunk, macAddress, preferredType)
+        if (primaryResult.success) {
+            return primaryResult
+        }
+
+        // Fallback to alternate write type if supported and primary failed
+        val alternateType = if (preferredType == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT && canWriteNoResp) {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        } else if (preferredType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE && canWriteDefault) {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        } else {
+            null
+        }
+
+        if (alternateType != null) {
+            Log.w(TAG, "X6H: Primary write type failed (${primaryResult.statusDescription}). Attempting fallback to alternate write type ($alternateType)...")
+            delay(30)
+            val fallbackResult = executeSingleGattWrite(gatt, characteristic, chunk, macAddress, alternateType)
+            if (fallbackResult.success) {
+                activeGattWriteType[macAddress] = alternateType
+                Log.i(TAG, "X6H: Fallback write type SUCCESS. Updated preferred write type to $alternateType.")
+                return fallbackResult
+            }
+        }
+
+        return primaryResult
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun executeSingleGattWrite(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        chunk: ByteArray,
+        macAddress: String,
+        writeType: Int
+    ): GattWriteResult {
+        val deferred = if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) {
+            CompletableDeferred<GattWriteResult>().also { pendingWriteDeferreds[macAddress] = it }
+        } else {
+            null
+        }
+
+        val writeInitiatedStatus: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(characteristic, chunk, writeType)
         } else {
             @Suppress("DEPRECATION")
             characteristic.value = chunk
             @Suppress("DEPRECATION")
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            characteristic.writeType = writeType
             @Suppress("DEPRECATION")
-            gatt.writeCharacteristic(characteristic)
+            val ok = gatt.writeCharacteristic(characteristic)
+            if (ok) BluetoothStatusCodes.SUCCESS else BluetoothStatusCodes.ERROR_UNKNOWN
         }
 
-        if (!writeInitiated) {
+        val writeTypeStr = if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) "WRITE_NO_RESPONSE" else "WRITE_DEFAULT"
+        Log.d(TAG, "X6H executeSingleGattWrite: char=${characteristic.uuid}, len=${chunk.size}B, writeType=$writeTypeStr, writeInitiatedStatus=$writeInitiatedStatus")
+
+        if (writeInitiatedStatus != BluetoothStatusCodes.SUCCESS) {
             pendingWriteDeferreds.remove(macAddress)
-            return false
+            val desc = getGattStatusDescription(writeInitiatedStatus)
+            return GattWriteResult(
+                success = false,
+                statusCode = writeInitiatedStatus,
+                statusDescription = desc,
+                writeTypeUsed = writeType,
+                errorMessage = "GATT write initiation rejected with code $writeInitiatedStatus ($desc) on $writeTypeStr"
+            )
         }
 
-        return try {
-            withTimeout(3000L) {
-                deferred.await()
+        // For WRITE_TYPE_DEFAULT: Await onCharacteristicWrite acknowledgment
+        if (deferred != null) {
+            return try {
+                withTimeout(2500L) {
+                    deferred.await()
+                }
+            } catch (e: Exception) {
+                pendingWriteDeferreds.remove(macAddress)
+                val lastStatus = lastGattStatusMap[macAddress] ?: -1
+                GattWriteResult(
+                    success = false,
+                    statusCode = lastStatus,
+                    statusDescription = getGattStatusDescription(lastStatus),
+                    writeTypeUsed = writeType,
+                    errorMessage = "GATT write timeout waiting for onCharacteristicWrite ACK (Last status: $lastStatus - ${getGattStatusDescription(lastStatus)})"
+                )
             }
-        } catch (e: Exception) {
-            pendingWriteDeferreds.remove(macAddress)
-            false
         }
+
+        // For WRITE_TYPE_NO_RESPONSE: Enforce safe inter-packet pacing
+        delay(12L)
+        return GattWriteResult(
+            success = true,
+            statusCode = BluetoothGatt.GATT_SUCCESS,
+            statusDescription = "SUCCESS",
+            writeTypeUsed = writeType,
+            bytesWritten = chunk.size
+        )
     }
 
     // -------------------------------------------------------------
@@ -1438,7 +1707,6 @@ class BluetoothPrinterManager(private val context: Context) {
             val b = data[i]
             val bInt = b.toInt() and 0xFF
 
-            // Strip cutter commands (0x1D 0x56) that cause 58mm mobile thermal printers without cutters to crash
             if (bInt == 0x1D && i + 1 < data.size && (data[i + 1].toInt() and 0xFF) == 0x56) {
                 if (i + 3 < data.size && ((data[i + 2].toInt() and 0xFF) == 0x41 || (data[i + 2].toInt() and 0xFF) == 0x42)) {
                     i += 4
@@ -1483,6 +1751,42 @@ class BluetoothPrinterManager(private val context: Context) {
 
         fun isX6CatPacket(data: ByteArray): Boolean {
             return data.size >= 2 && data[0] == 0x51.toByte() && data[1] == 0x78.toByte()
+        }
+
+        fun getPropertyStrings(properties: Int): List<String> {
+            val list = mutableListOf<String>()
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_BROADCAST) != 0) list.add("BROADCAST")
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_READ) != 0) list.add("READ")
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) list.add("WRITE_NO_RESPONSE")
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) list.add("WRITE")
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) list.add("NOTIFY")
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0) list.add("INDICATE")
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_SIGNED_WRITE) != 0) list.add("SIGNED_WRITE")
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_EXTENDED_PROPS) != 0) list.add("EXTENDED_PROPS")
+            return if (list.isEmpty()) listOf("NONE") else list
+        }
+
+        fun getGattStatusDescription(status: Int): String {
+            return when (status) {
+                BluetoothGatt.GATT_SUCCESS -> "GATT_SUCCESS (0)"
+                BluetoothGatt.GATT_READ_NOT_PERMITTED -> "GATT_READ_NOT_PERMITTED (2)"
+                BluetoothGatt.GATT_WRITE_NOT_PERMITTED -> "GATT_WRITE_NOT_PERMITTED (3)"
+                BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION -> "GATT_INSUFFICIENT_AUTHENTICATION (5)"
+                BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED -> "GATT_REQUEST_NOT_SUPPORTED (6)"
+                BluetoothGatt.GATT_INVALID_OFFSET -> "GATT_INVALID_OFFSET (7)"
+                BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH -> "GATT_INVALID_ATTRIBUTE_LENGTH (13)"
+                BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION -> "GATT_INSUFFICIENT_ENCRYPTION (15)"
+                128 -> "GATT_NO_RESOURCES (128)"
+                133 -> "GATT_ERROR_133 (Connection congested / stack timeout)"
+                257 -> "GATT_FAILURE (257)"
+                BluetoothStatusCodes.SUCCESS -> "SUCCESS (0)"
+                BluetoothStatusCodes.ERROR_UNKNOWN -> "ERROR_UNKNOWN"
+                BluetoothStatusCodes.ERROR_PROFILE_SERVICE_NOT_BOUND -> "ERROR_PROFILE_SERVICE_NOT_BOUND"
+                BluetoothStatusCodes.ERROR_FEATURE_NOT_CONFIGURED -> "ERROR_FEATURE_NOT_CONFIGURED"
+                BluetoothStatusCodes.ERROR_GATT_WRITE_NOT_ALLOWED -> "ERROR_GATT_WRITE_NOT_ALLOWED"
+                BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY -> "ERROR_GATT_WRITE_REQUEST_BUSY"
+                else -> "GATT_STATUS_$status"
+            }
         }
 
         /*

@@ -263,6 +263,22 @@ class NativeBridge(
         }
     }
 
+    @JavascriptInterface
+    fun testBleWrite(targetIdentifier: String, callbackId: String) {
+        bridgeScope.launch {
+            val result = bluetoothManager.testBleWrite(targetIdentifier)
+            postCallback(callbackId, result.toString())
+        }
+    }
+
+    @JavascriptInterface
+    fun getGattDiagnostic(targetIdentifier: String, callbackId: String) {
+        bridgeScope.launch {
+            val result = bluetoothManager.getGattDiagnosticJson(targetIdentifier)
+            postCallback(callbackId, result.toString())
+        }
+    }
+
     // -------------------------------------------------------------
     // Cash Drawer API (Section 20)
     // -------------------------------------------------------------

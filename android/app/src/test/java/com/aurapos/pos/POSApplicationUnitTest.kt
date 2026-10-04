@@ -67,4 +67,21 @@ class POSApplicationUnitTest {
         assertEquals(10, packet.size)
         assertTrue(BluetoothPrinterManager.isX6CatPacket(packet))
     }
+
+    @Test
+    fun testGattPropertyParsingAndStatusDescriptions() {
+        val writeOnlyProps = android.bluetooth.BluetoothGattCharacteristic.PROPERTY_WRITE
+        val propStringsA = BluetoothPrinterManager.getPropertyStrings(writeOnlyProps)
+        assertTrue(propStringsA.contains("WRITE"))
+
+        val writeNoRespProps = android.bluetooth.BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
+        val propStringsB = BluetoothPrinterManager.getPropertyStrings(writeNoRespProps)
+        assertTrue(propStringsB.contains("WRITE_NO_RESPONSE"))
+
+        val status0 = BluetoothPrinterManager.getGattStatusDescription(0)
+        assertTrue(status0.contains("SUCCESS"))
+
+        val status133 = BluetoothPrinterManager.getGattStatusDescription(133)
+        assertTrue(status133.contains("133"))
+    }
 }

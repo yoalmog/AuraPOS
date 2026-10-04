@@ -86,6 +86,13 @@ export const PrinterSettings: React.FC = () => {
   const [btPurpose, setBtPurpose] = useState<PrinterPurpose>('receipt');
   const [btAutoPrint, setBtAutoPrint] = useState<boolean>(true);
 
+  // BLE Diagnostic Modal State (Tasks 7, 12, 14)
+  const [diagModalDevice, setDiagModalDevice] = useState<DiscoveredNativeDevice | null>(null);
+  const [diagData, setDiagData] = useState<any>(null);
+  const [diagLoading, setDiagLoading] = useState<boolean>(false);
+  const [diagWriteTesting, setDiagWriteTesting] = useState<boolean>(false);
+  const [diagWriteResult, setDiagWriteResult] = useState<any>(null);
+
   // --------------------------------------------------------------------------
   // USB HARDWARE STATE (Section 8)
   // --------------------------------------------------------------------------
@@ -323,6 +330,50 @@ export const PrinterSettings: React.FC = () => {
       showToast({ type: 'success', title: 'Test Print Dispatched', message: res.message });
     } else {
       showToast({ type: 'error', title: 'Test Print Failed', message: res.error });
+    }
+  };
+
+  const handleOpenBleDiagnostic = async (device: DiscoveredNativeDevice) => {
+    setDiagModalDevice(device);
+    setDiagLoading(true);
+    setDiagWriteResult(null);
+    try {
+      const res = await NativeBridgeService.printer.getGattDiagnostic(device.address || device.id);
+      if (res.success && res.diagnostic) {
+        setDiagData(res.diagnostic);
+      } else {
+        setDiagData({ error: res.error || 'Failed to inspect GATT characteristics' });
+      }
+    } catch (e: any) {
+      setDiagData({ error: e?.message || 'Error communicating with GATT driver' });
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  const handleRunBle1PacketTest = async (device: DiscoveredNativeDevice) => {
+    setDiagWriteTesting(true);
+    setDiagWriteResult(null);
+    try {
+      const res = await NativeBridgeService.printer.testBleWrite(device.address || device.id);
+      setDiagWriteResult(res);
+      if (res.success) {
+        showToast({
+          type: 'success',
+          title: 'TEST B Passed: 1-Packet Write OK',
+          message: res.message || '1-Packet write successfully accepted by Android GATT.'
+        });
+      } else {
+        showToast({
+          type: 'error',
+          title: 'TEST B Failed: 1-Packet Write Error',
+          message: res.error || 'GATT write rejected.'
+        });
+      }
+    } catch (e: any) {
+      setDiagWriteResult({ success: false, error: e?.message || 'Write test execution failed' });
+    } finally {
+      setDiagWriteTesting(false);
     }
   };
 
@@ -951,6 +1002,15 @@ export const PrinterSettings: React.FC = () => {
 
                             <button
                               type="button"
+                              onClick={() => handleOpenBleDiagnostic(device)}
+                              className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Activity className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>GATT Diagnostic</span>
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={() => setSavingBtDevice(device)}
                               className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                             >
@@ -1448,6 +1508,192 @@ export const PrinterSettings: React.FC = () => {
           result={testResult}
           isLoading={isTestingInProgress}
         />
+      )}
+
+      {/* BLE GATT Diagnostic Inspection Modal (Tasks 7, 12, 14) */}
+      {diagModalDevice && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4 border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">
+                    BLE GATT Diagnostic: {diagModalDevice.name}
+                  </h3>
+                  <p className="text-xs font-mono text-slate-500">
+                    MAC: {diagModalDevice.address || diagModalDevice.id}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDiagModalDevice(null);
+                  setDiagData(null);
+                  setDiagWriteResult(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {diagLoading ? (
+              <div className="py-12 text-center space-y-3">
+                <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
+                <p className="text-sm font-semibold text-slate-800">
+                  Inspecting BLE GATT Services & Characteristics...
+                </p>
+                <p className="text-xs text-slate-400">Discovering primary service, write/notify characteristics, properties, and MTU</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Status Overview Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Transport</span>
+                    <span className="font-bold text-indigo-600">BLE / GATT</span>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">GATT State</span>
+                    <span className="font-bold text-emerald-700">{diagData?.state || 'CONNECTED'}</span>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Negotiated MTU</span>
+                    <span className="font-bold text-slate-800">{diagData?.mtu || 23} Bytes</span>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Notifications</span>
+                    <span className="font-bold text-indigo-700">{diagData?.notificationsStatus || 'ENABLED'}</span>
+                  </div>
+                </div>
+
+                {/* Selected Characteristics & Write Type */}
+                <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100 text-xs space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <span className="font-bold text-indigo-900">Active Write Characteristic:</span>
+                    <span className="font-mono text-[11px] font-bold text-indigo-800 bg-white px-2 py-0.5 rounded-md border border-indigo-200">
+                      {diagData?.selectedWriteChar || '0000AE01-0000-1000-8000-00805F9B34FB'}
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <span className="font-bold text-indigo-900">Configured Write Type:</span>
+                    <span className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      {diagData?.selectedWriteType || 'WRITE_NO_RESPONSE (Dynamic Handshake)'}
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <span className="font-bold text-indigo-900">Active Notify Characteristic:</span>
+                    <span className="font-mono text-[11px] font-bold text-indigo-800 bg-white px-2 py-0.5 rounded-md border border-indigo-200">
+                      {diagData?.selectedNotifyChar || '0000AE02-0000-1000-8000-00805F9B34FB'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Test Action Buttons */}
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                  <span className="text-xs font-bold text-slate-800 block">
+                    Diagnostic Test Routines:
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={diagWriteTesting}
+                      onClick={() => handleRunBle1PacketTest(diagModalDevice)}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Radio className={`w-3.5 h-3.5 ${diagWriteTesting ? 'animate-spin' : ''}`} />
+                      <span>{diagWriteTesting ? 'Transmitting...' : 'TEST B: Send 1-Packet Write Test'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleTestPrintBluetoothDevice(diagModalDevice);
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>TEST C: Full Receipt Physical Print</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 1-Packet Write Test Result Feedback */}
+                {diagWriteResult && (
+                  <div
+                    className={`p-3.5 rounded-xl border text-xs space-y-1 ${
+                      diagWriteResult.success
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        : 'bg-rose-50 border-rose-200 text-rose-900'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 font-bold">
+                      {diagWriteResult.success ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>TEST B Passed: 1-Packet GATT Write Handshake OK</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="w-4 h-4 text-rose-600" />
+                          <span>TEST B Failed: 1-Packet GATT Write Error</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-[11px] leading-relaxed">
+                      {diagWriteResult.message || diagWriteResult.error}
+                    </p>
+                    {diagWriteResult.statusCode !== undefined && (
+                      <div className="font-mono text-[10px] opacity-80">
+                        Status Code: {diagWriteResult.statusCode} ({diagWriteResult.statusDescription}) | Write Type: {diagWriteResult.writeType}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* All Discovered Services & Characteristics Tree */}
+                {diagData?.services && diagData.services.length > 0 && (
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                      Discovered GATT Service Tree:
+                    </label>
+                    <div className="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-[11px] max-h-48 overflow-y-auto leading-relaxed border border-slate-800 space-y-2">
+                      {diagData.services.map((srv: any, sIdx: number) => (
+                        <div key={sIdx} className="space-y-1">
+                          <div className="text-amber-400 font-bold">SERVICE: {srv.uuid}</div>
+                          {srv.characteristics?.map((ch: any, cIdx: number) => (
+                            <div key={cIdx} className="pl-3 text-slate-300">
+                              <div>├─ CHAR: <span className="text-emerald-400">{ch.uuid}</span></div>
+                              <div className="pl-4 text-[10px] text-slate-400">PROPERTIES: [{ch.properties}]</div>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setDiagModalDevice(null);
+                  setDiagData(null);
+                  setDiagWriteResult(null);
+                }}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Close Diagnostic
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
