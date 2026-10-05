@@ -29,6 +29,7 @@ import { ReviewStep } from './ReviewStep.tsx';
 import { ImportSummaryModal } from './ImportSummaryModal.tsx';
 import { MenuScannerApi } from '../../services/api/menuScannerApi.ts';
 import { MenuScannerImportService } from '../../services/menuScannerImportService.ts';
+import { optimizeImageForOCR } from '../../utils/imageOptimizer.ts';
 
 export const MenuScannerView: React.FC = () => {
   const {
@@ -68,33 +69,59 @@ export const MenuScannerView: React.FC = () => {
   // -------------------------------------------------------------
   // File Upload Handlers (Images & PDFs)
   // -------------------------------------------------------------
-  const handleFilesSelected = (files: FileList | null) => {
+  const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
     const fileList = Array.from(files);
-    fileList.forEach((file, idx) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          const newPage: ScannedMenuPage = {
-            id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-            name: file.name || `Page ${pages.length + idx + 1}`,
-            dataUrl: reader.result,
-            mimeType: file.type || 'image/jpeg',
-            rotation: 0,
-            timestamp: new Date().toISOString(),
-            fileSize: file.size
-          };
-          setPages(prev => [...prev, newPage]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-
     showToast({
       type: 'info',
-      title: 'Files Added',
-      message: `${fileList.length} menu ${fileList.length === 1 ? 'page' : 'pages'} uploaded.`
+      title: 'Optimizing Pages',
+      message: `Processing ${fileList.length} menu ${fileList.length === 1 ? 'page' : 'pages'} for AI recognition...`
+    });
+
+    for (let idx = 0; idx < fileList.length; idx++) {
+      const file = fileList[idx];
+      const reader = new FileReader();
+      
+      await new Promise<void>((resolve) => {
+        reader.onload = async () => {
+          if (typeof reader.result === 'string') {
+            try {
+              const opt = await optimizeImageForOCR(reader.result, 0, 1800, 0.85);
+              const newPage: ScannedMenuPage = {
+                id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
+                name: file.name || `Page ${pages.length + idx + 1}`,
+                dataUrl: opt.dataUrl,
+                mimeType: 'image/jpeg',
+                rotation: 0,
+                timestamp: new Date().toISOString(),
+                fileSize: opt.fileSize
+              };
+              setPages(prev => [...prev, newPage]);
+            } catch (err) {
+              const newPage: ScannedMenuPage = {
+                id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
+                name: file.name || `Page ${pages.length + idx + 1}`,
+                dataUrl: reader.result as string,
+                mimeType: file.type || 'image/jpeg',
+                rotation: 0,
+                timestamp: new Date().toISOString(),
+                fileSize: file.size
+              };
+              setPages(prev => [...prev, newPage]);
+            }
+          }
+          resolve();
+        };
+        reader.onerror = () => resolve();
+        reader.readAsDataURL(file);
+      });
+    }
+
+    showToast({
+      type: 'success',
+      title: 'Pages Ready',
+      message: `${fileList.length} menu ${fileList.length === 1 ? 'page' : 'pages'} ready for AI analysis.`
     });
   };
 

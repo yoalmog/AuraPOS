@@ -10,6 +10,17 @@ function menuScannerPlugin(): Plugin {
     name: 'menu-scanner-api',
     configureServer(server) {
       server.middlewares.use('/api/menu/analyze', async (req, res) => {
+        // Set CORS headers
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+
         if (req.method !== 'POST') {
           res.statusCode = 405;
           res.setHeader('Content-Type', 'application/json');
@@ -22,11 +33,20 @@ function menuScannerPlugin(): Plugin {
           body += chunk;
         });
 
+        req.on('error', (err) => {
+          console.error('Request stream error:', err);
+          if (!res.headersSent) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: false, error: 'Failed to read request stream' }));
+          }
+        });
+
         req.on('end', async () => {
           res.setHeader('Content-Type', 'application/json');
           try {
             const parsed = JSON.parse(body || '{}');
-            const pages: Array<{ dataUrl: string; mimeType?: string }> = parsed.pages || [];
+            const pages: Array<{ dataUrl: string; mimeType?: string; rotation?: number }> = parsed.pages || [];
 
             if (!pages || pages.length === 0) {
               res.statusCode = 400;
@@ -34,7 +54,7 @@ function menuScannerPlugin(): Plugin {
               return;
             }
 
-            const apiKey = process.env.GEMINI_API_KEY;
+            const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
             if (!apiKey) {
               res.statusCode = 500;
               res.end(
@@ -56,7 +76,7 @@ function menuScannerPlugin(): Plugin {
             });
 
             // Prepare inline image parts
-            const imageParts = pages.map((page, idx) => {
+            const imageParts = pages.map((page) => {
               let cleanBase64 = page.dataUrl;
               let mime = page.mimeType || 'image/jpeg';
 
@@ -78,122 +98,146 @@ function menuScannerPlugin(): Plugin {
             });
 
             const promptText = `
-You are an expert Restaurant Menu OCR and POS Catalog Structuring Specialist.
-Analyze the provided restaurant/cafe menu page image(s) thoroughly.
+You are an expert Restaurant & Café Menu OCR Specialist and POS Catalog Engineer.
+Analyze the provided restaurant/cafe menu page image(s) thoroughly (supports English, Spanish, Italian, and all languages).
 
-CRITICAL INSTRUCTIONS:
-1. Extract EVERY visible category and menu item (food, beverages, desserts, specials, sides, combos, merchandise).
+CRITICAL EXTRACTION INSTRUCTIONS:
+1. Extract ALL categories/sections, products, and prices from the menu pages.
+   - For example: "PIZZAS ARDIENTES", "PIZZAS COQUETAS", "PIZZAS ECOLÓGICAS", "PIZZAS DE LA CASA", "BEBIDAS", "CHICHA MORADA", "GASEOSAS", "COCTELES", "POSTRES", "ENTRADAS", etc.
 2. For each category:
-   - Identify or formulate a clear, standardized category name (e.g., "Starters & Appetizers", "Artisan Burgers", "Specialty Coffee & Espresso", "Signature Cocktails", "Pizzas & Flatbreads", "Desserts").
-   - Extract category description/subtitle if present.
-   - Assign an appropriate modern theme color and Lucide icon name (e.g. Coffee, Utensils, Flame, Pizza, Wine, Cake, Salad, Sandwich, Beer, Fish, Cookie, Sparkles).
-3. For each product/item:
-   - Extract the exact Item Name.
-   - Assign it to the correct categoryName.
-   - Extract full description, ingredient list, or preparation notes if present.
-   - Extract the primary numeric price (exclude currency symbols).
-   - If multiple sizes or variants are listed (e.g., "Small $4.50 / Medium $5.50 / Large $6.50", "Single $9 / Double $13", "Half Pint $4 / Pint $7"), extract them into the 'variants' array with their specific prices, and set 'price' to the base/lowest variant price.
-   - If add-ons, extras, or choices are listed (e.g., "Add Avocado +$2.00", "Choice of Dressing: Ranch, Caesar, Vinaigrette", "Choice of Milk: Oat (+0.75), Almond (+0.75), Whole"), extract them into the 'modifiers' array with price deltas.
-   - Detect dietary and specialty flags: isSpicy, isVegetarian, isGlutenFree, isAlcoholic (e.g., if chili icon, V, VG, GF, ABV% appears).
-   - Generate a clean SKU (e.g. "BUR-001", "COF-012").
-4. Deduplicate items if the same section repeats across multiple scanned pages.
-5. If prices are ambiguous or listed in columns, carefully align the price with the corresponding dish or variant.
-6. Provide rich, accurate, clean POS data ready for immediate insertion into the point-of-sale catalog.
+   - Identify the clear Category Name.
+   - Assign an appropriate Lucide icon name (e.g. Pizza, Coffee, Utensils, Flame, Wine, Beer, Cake, Salad, Sandwich, Sparkles, CupSoda).
+   - Assign a clean hex color.
+3. For each product/dish/drink:
+   - Extract the exact Item Name (e.g. "LUNA ROJA", "LA DIABÓLICA", "LA SALVAJE", "LUNA DE MIEL", "LUNA NUEVA", "LA HUEVONA", "LA SALAMERA", "LA HAWAIANA", "LA GRINGA", "Chicha Morada 1/2 Litro", "Chicha Morada 1 Litro").
+   - Extract the description/ingredients (e.g. "salsa de tomate picante, mozzarella, rocoto, aceituna y oregano", "piña, durazno, leche condensada, canela").
+   - Multi-size columns handling: If prices are in columns like "Personal / Mediana / Familiar" (e.g. 17.00, 30.00, 48.00), populate the 'variants' array:
+     [
+       { "name": "Personal", "price": 17.00 },
+       { "name": "Mediana", "price": 30.00 },
+       { "name": "Familiar", "price": 48.00 }
+     ]
+     and set 'price' to the base/lowest price (e.g. 17.00).
+   - If single price, set 'price' to that number.
+   - Extract modifiers/extras if mentioned (e.g. "Pan al Ajo", "Extra queso", "Adicional").
+   - Detect dietary tags: isSpicy (picante/spicy/chili), isVegetarian (vegetariana/ecológica), isGlutenFree, isAlcoholic (cerveza, coctel, pisco, vino, mojito, piña colada).
+4. Deduplicate products if the same item appears across multiple scanned pages.
+5. Return clean, rich structured JSON adhering to the schema.
 `;
 
-            const response = await ai.models.generateContent({
-              model: 'gemini-3.8-flash',
-              contents: {
-                parts: [...imageParts, { text: promptText }]
-              },
-              config: {
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    menuTitle: { type: Type.STRING, description: 'Restaurant or menu title if visible' },
-                    detectedCurrency: { type: Type.STRING, description: 'Currency symbol or code (e.g. $, €, £, ¥)' },
-                    notes: { type: Type.STRING, description: 'Any special notes, hours, or dietary remarks' },
-                    categories: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          name: { type: Type.STRING, description: 'Category name' },
-                          description: { type: Type.STRING, description: 'Category description' },
-                          color: { type: Type.STRING, description: 'Hex color code' },
-                          iconName: { type: Type.STRING, description: 'Lucide icon name' },
-                          autoPrintKitchen: { type: Type.BOOLEAN, description: 'Whether category items route to kitchen' }
-                        },
-                        required: ['name']
-                      }
-                    },
-                    products: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          name: { type: Type.STRING, description: 'Product name' },
-                          categoryName: { type: Type.STRING, description: 'Category name' },
-                          description: { type: Type.STRING, description: 'Product description' },
-                          price: { type: Type.NUMBER, description: 'Base price as numeric float' },
-                          cost: { type: Type.NUMBER, description: 'Estimated ingredient cost' },
-                          unit: { type: Type.STRING, description: 'Unit: item, glass, cup, portion, etc.' },
-                          sku: { type: Type.STRING, description: 'Generated SKU' },
-                          isSpicy: { type: Type.BOOLEAN },
-                          isVegetarian: { type: Type.BOOLEAN },
-                          isGlutenFree: { type: Type.BOOLEAN },
-                          isAlcoholic: { type: Type.BOOLEAN },
-                          variants: {
-                            type: Type.ARRAY,
-                            items: {
-                              type: Type.OBJECT,
-                              properties: {
-                                name: { type: Type.STRING, description: 'Variant / size name' },
-                                price: { type: Type.NUMBER, description: 'Price for variant' },
-                                sku: { type: Type.STRING }
-                              },
-                              required: ['name', 'price']
-                            }
-                          },
-                          modifiers: {
-                            type: Type.ARRAY,
-                            items: {
-                              type: Type.OBJECT,
-                              properties: {
-                                name: { type: Type.STRING, description: 'Modifier group name' },
-                                required: { type: Type.BOOLEAN },
-                                options: {
-                                  type: Type.ARRAY,
-                                  items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                      name: { type: Type.STRING, description: 'Option name' },
-                                      priceDelta: { type: Type.NUMBER, description: 'Price increase' }
-                                    },
-                                    required: ['name', 'priceDelta']
-                                  }
-                                }
-                              },
-                              required: ['name', 'options']
-                            }
+            let response: any = null;
+            let lastError: any = null;
+            const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+
+            for (const modelName of modelsToTry) {
+              try {
+                response = await ai.models.generateContent({
+                  model: modelName,
+                  contents: {
+                    parts: [...imageParts, { text: promptText }]
+                  },
+                  config: {
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        menuTitle: { type: Type.STRING, description: 'Restaurant or menu title if visible' },
+                        detectedCurrency: { type: Type.STRING, description: 'Currency symbol or code (e.g. S/, $, €, £)' },
+                        notes: { type: Type.STRING, description: 'Any special notes, promotions or dietary remarks' },
+                        categories: {
+                          type: Type.ARRAY,
+                          items: {
+                            type: Type.OBJECT,
+                            properties: {
+                              name: { type: Type.STRING, description: 'Category name' },
+                              description: { type: Type.STRING, description: 'Category description' },
+                              color: { type: Type.STRING, description: 'Hex color code' },
+                              iconName: { type: Type.STRING, description: 'Lucide icon name' },
+                              autoPrintKitchen: { type: Type.BOOLEAN, description: 'Whether category items route to kitchen' }
+                            },
+                            required: ['name']
                           }
                         },
-                        required: ['name', 'categoryName', 'price']
-                      }
+                        products: {
+                          type: Type.ARRAY,
+                          items: {
+                            type: Type.OBJECT,
+                            properties: {
+                              name: { type: Type.STRING, description: 'Product name' },
+                              categoryName: { type: Type.STRING, description: 'Category name' },
+                              description: { type: Type.STRING, description: 'Product description' },
+                              price: { type: Type.NUMBER, description: 'Base price as numeric float' },
+                              cost: { type: Type.NUMBER, description: 'Estimated ingredient cost' },
+                              unit: { type: Type.STRING, description: 'Unit: item, glass, cup, portion, etc.' },
+                              sku: { type: Type.STRING, description: 'Generated SKU' },
+                              isSpicy: { type: Type.BOOLEAN },
+                              isVegetarian: { type: Type.BOOLEAN },
+                              isGlutenFree: { type: Type.BOOLEAN },
+                              isAlcoholic: { type: Type.BOOLEAN },
+                              variants: {
+                                type: Type.ARRAY,
+                                items: {
+                                  type: Type.OBJECT,
+                                  properties: {
+                                    name: { type: Type.STRING, description: 'Variant / size name' },
+                                    price: { type: Type.NUMBER, description: 'Price for variant' },
+                                    sku: { type: Type.STRING }
+                                  },
+                                  required: ['name', 'price']
+                                }
+                              },
+                              modifiers: {
+                                type: Type.ARRAY,
+                                items: {
+                                  type: Type.OBJECT,
+                                  properties: {
+                                    name: { type: Type.STRING, description: 'Modifier group name' },
+                                    required: { type: Type.BOOLEAN },
+                                    options: {
+                                      type: Type.ARRAY,
+                                      items: {
+                                        type: Type.OBJECT,
+                                        properties: {
+                                          name: { type: Type.STRING, description: 'Option name' },
+                                          priceDelta: { type: Type.NUMBER, description: 'Price increase' }
+                                        },
+                                        required: ['name', 'priceDelta']
+                                      }
+                                    }
+                                  },
+                                  required: ['name', 'options']
+                                }
+                              }
+                            },
+                            required: ['name', 'categoryName', 'price']
+                          }
+                        }
+                      },
+                      required: ['categories', 'products']
                     }
-                  },
-                  required: ['categories', 'products']
+                  }
+                });
+
+                if (response && response.text) {
+                  break; // Successful response
                 }
+              } catch (e: any) {
+                console.warn(`Model ${modelName} failed, trying next candidate:`, e?.message || e);
+                lastError = e;
               }
-            });
+            }
+
+            if (!response || !response.text) {
+              throw lastError || new Error('All AI models failed to process menu.');
+            }
 
             const textOutput = response.text || '{}';
             let parsedData;
             try {
               parsedData = JSON.parse(textOutput);
             } catch (e) {
-              parsedData = JSON.parse(textOutput.replace(/```json/g, '').replace(/```/g, '').trim());
+              const cleaned = textOutput.replace(/```json/gi, '').replace(/```/g, '').trim();
+              parsedData = JSON.parse(cleaned);
             }
 
             res.statusCode = 200;
