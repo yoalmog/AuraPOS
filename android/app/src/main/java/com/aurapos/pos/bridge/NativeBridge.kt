@@ -335,13 +335,24 @@ class NativeBridge(
     fun analyzeMenu(payloadJson: String, callbackId: String) {
         bridgeScope.launch(Dispatchers.IO) {
             try {
-                val url = java.net.URL("https://ais-dev-67yayhjbdr2qcybjx7s4jj-113121063300.us-west2.run.app/api/menu/analyze")
+                // Parse optional target endpoint URL if configured by user
+                val parsed = try { JSONObject(payloadJson) } catch (e: Exception) { null }
+                val customEndpoint = parsed?.optString("endpointUrl", null)
+                val targetUrl = if (!customEndpoint.isNullOrBlank()) {
+                    customEndpoint
+                } else {
+                    "https://ais-dev-67yayhjbdr2qcybjx7s4jj-113121063300.us-west2.run.app/api/menu/analyze"
+                }
+
+                val url = java.net.URL(targetUrl)
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Accept", "application/json")
+                conn.instanceFollowRedirects = true
                 conn.doOutput = true
                 conn.connectTimeout = 30000
-                conn.readTimeout = 60000
+                conn.readTimeout = 120000
 
                 conn.outputStream.use { os ->
                     os.write(payloadJson.toByteArray(Charsets.UTF_8))
@@ -350,7 +361,7 @@ class NativeBridge(
 
                 val responseCode = conn.responseCode
                 val stream = if (responseCode in 200..299) conn.inputStream else conn.errorStream
-                val responseStr = stream.bufferedReader().use { it.readText() }
+                val responseStr = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
 
                 postCallback(callbackId, responseStr)
             } catch (e: Exception) {
@@ -358,6 +369,7 @@ class NativeBridge(
                 val errObj = JSONObject().apply {
                     put("success", false)
                     put("error", e.message ?: "Native OCR bridge request failed")
+                    put("errorType", "NETWORK_ERROR")
                 }
                 postCallback(callbackId, errObj.toString())
             }

@@ -230,9 +230,8 @@ CRITICAL EXTRACTION INSTRUCTIONS:
 
     // Models supported by @google/genai SDK in priority order
     const modelsToTry = [
-      'gemini-flash-lite-latest',
       'gemini-3.1-flash-lite',
-      'gemini-flash-latest',
+      'gemini-flash-lite-latest',
       'gemini-3.8-flash'
     ];
 

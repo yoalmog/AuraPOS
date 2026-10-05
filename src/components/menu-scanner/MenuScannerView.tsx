@@ -10,10 +10,18 @@ import {
   RotateCcw,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   HelpCircle,
   Layers,
   Utensils,
-  BookOpen
+  BookOpen,
+  WifiOff,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Check,
+  Zap
 } from 'lucide-react';
 import {
   ScannedMenuPage,
@@ -27,9 +35,14 @@ import { CameraCaptureModal } from './CameraCaptureModal.tsx';
 import { PageManager } from './PageManager.tsx';
 import { ReviewStep } from './ReviewStep.tsx';
 import { ImportSummaryModal } from './ImportSummaryModal.tsx';
-import { MenuScannerApi } from '../../services/api/menuScannerApi.ts';
+import {
+  MenuScannerApi,
+  ExtractionDiagnosticError,
+  ExtractionErrorType
+} from '../../services/api/menuScannerApi.ts';
 import { MenuScannerImportService } from '../../services/menuScannerImportService.ts';
 import { optimizeImageForOCR } from '../../utils/imageOptimizer.ts';
+import { generateSampleMenuPages } from '../../utils/sampleMenuGenerator.ts';
 
 export const MenuScannerView: React.FC = () => {
   const {
@@ -57,6 +70,17 @@ export const MenuScannerView: React.FC = () => {
   // Analysis Loading State & Animation Stage
   const [analysisProgressStage, setAnalysisProgressStage] = useState<string>('Uploading images...');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [diagnosticDetails, setDiagnosticDetails] = useState<{
+    stage: string;
+    endpoint: string;
+    status: number;
+    statusText: string;
+    errorType: ExtractionErrorType;
+    requestId: string;
+    timestamp: string;
+  } | null>(null);
+  const [showDiagnosticDetails, setShowDiagnosticDetails] = useState<boolean>(false);
+  const [copiedDiagnostic, setCopiedDiagnostic] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
 
@@ -170,6 +194,35 @@ export const MenuScannerView: React.FC = () => {
   };
 
   // -------------------------------------------------------------
+  // Load Sample Menu (Demo & Instant Verification)
+  // -------------------------------------------------------------
+  const handleLoadSampleMenu = async () => {
+    try {
+      showToast({
+        type: 'info',
+        title: 'Generating Demo Menu',
+        message: 'Building 5 high-resolution menu pages (Bella Napoli Trattoria)...'
+      });
+      const samplePages = await generateSampleMenuPages();
+      setPages(samplePages);
+      setErrorMessage(null);
+      setDiagnosticDetails(null);
+      showToast({
+        type: 'success',
+        title: '5 Pages Ready',
+        message: 'Tap "Analyze Menu with AI" to test Gemini Vision OCR.'
+      });
+    } catch (err: any) {
+      console.error('Error generating sample menu:', err);
+      showToast({
+        type: 'error',
+        title: 'Error',
+        message: 'Could not generate sample menu pages.'
+      });
+    }
+  };
+
+  // -------------------------------------------------------------
   // AI Extraction Flow
   // -------------------------------------------------------------
   const handleStartAnalysis = async () => {
@@ -185,6 +238,7 @@ export const MenuScannerView: React.FC = () => {
     try {
       setCurrentStep('analyzing');
       setErrorMessage(null);
+      setDiagnosticDetails(null);
       setAnalysisProgressStage('Validating menu images...');
 
       const result = await MenuScannerApi.analyzeMenu(pages, (stage) => {
@@ -219,12 +273,48 @@ export const MenuScannerView: React.FC = () => {
       });
     } catch (err: any) {
       console.error('Menu scan error:', err);
-      const userMsg = err.message || 'Error processing menu scan.';
+      let userMsg = err.message || 'Error processing menu scan.';
+      let errType: ExtractionErrorType = 'UNKNOWN_ERROR';
+
+      if (err instanceof ExtractionDiagnosticError || err.errorType) {
+        const diag = {
+          stage: err.stage || 'EXTRACTION_STAGE',
+          endpoint: err.endpoint || '/api/menu/analyze',
+          status: err.status || 0,
+          statusText: err.statusText || '',
+          errorType: (err.errorType as ExtractionErrorType) || 'UNKNOWN_ERROR',
+          requestId: err.requestId || `diag_${Date.now()}`,
+          timestamp: err.timestamp || new Date().toISOString()
+        };
+        setDiagnosticDetails(diag);
+        errType = diag.errorType;
+        userMsg = err.message;
+      } else {
+        setDiagnosticDetails({
+          stage: 'CLIENT_EXECUTION',
+          endpoint: 'client_call',
+          status: 0,
+          statusText: 'CLIENT_EXCEPTION',
+          errorType: 'UNKNOWN_ERROR',
+          requestId: `cli_${Date.now()}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+
       setErrorMessage(userMsg);
       setCurrentStep('capture');
+
+      let toastTitle = 'Scan Failed';
+      if (errType === 'AI_HIGH_DEMAND') toastTitle = 'AI Demand Spike';
+      else if (errType === 'AI_RATE_LIMIT') toastTitle = 'Rate Limit Reached';
+      else if (errType === 'OFFLINE_ERROR') toastTitle = 'Device Offline';
+      else if (errType === 'TIMEOUT_ERROR') toastTitle = 'Request Timed Out';
+      else if (errType === 'NETWORK_ERROR') toastTitle = 'Connection Error';
+      else if (errType === 'PAYLOAD_TOO_LARGE') toastTitle = 'Payload Too Large';
+
       showToast({
         type: 'error',
-        title: 'Scan Failed',
+        title: toastTitle,
         message: userMsg
       });
     }
@@ -274,7 +364,7 @@ export const MenuScannerView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden select-none">
+    <div className="flex-1 flex flex-col h-full bg-[var(--color-background,#f8fafc)] text-[var(--color-text-primary,#0f172a)] overflow-hidden select-none">
       {/* Global File Inputs (Multi-image/PDF & Direct Camera capture fallback) */}
       <input
         ref={fileInputRef}
@@ -370,37 +460,177 @@ export const MenuScannerView: React.FC = () => {
                   <Upload className="w-5 h-5" />
                   Upload Images or PDF
                 </label>
+
+                <button
+                  type="button"
+                  onClick={handleLoadSampleMenu}
+                  className="px-4 py-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-sm border border-amber-400/30 flex items-center gap-2 transition-all cursor-pointer backdrop-blur-xs"
+                  title="Load 5 realistic menu pages to test OCR instantly"
+                >
+                  <BookOpen className="w-4 h-4 text-amber-400" />
+                  Load Demo Menu (5 Pages)
+                </button>
               </div>
             </div>
           </div>
 
-          {/* Error Message if any */}
+          {/* Structured Diagnostic Error Display */}
           {errorMessage && (
-            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="font-bold text-sm">Extraction Error</h4>
-                  <p className="text-xs text-rose-700 mt-0.5">{errorMessage}</p>
+            <div className="mb-8 rounded-2xl bg-rose-50/90 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 p-5 shadow-sm transition-all animate-fadeIn">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="p-2.5 rounded-xl bg-rose-100 dark:bg-rose-900/60 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
+                    {diagnosticDetails?.errorType === 'OFFLINE_ERROR' ? (
+                      <WifiOff className="w-6 h-6" />
+                    ) : diagnosticDetails?.errorType === 'TIMEOUT_ERROR' ? (
+                      <Clock className="w-6 h-6" />
+                    ) : diagnosticDetails?.errorType === 'AI_HIGH_DEMAND' ||
+                      diagnosticDetails?.errorType === 'AI_RATE_LIMIT' ? (
+                      <AlertTriangle className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-bold text-base text-rose-950 dark:text-rose-200">
+                        {diagnosticDetails?.errorType === 'AI_HIGH_DEMAND'
+                          ? 'AI Server High Demand Spike'
+                          : diagnosticDetails?.errorType === 'AI_RATE_LIMIT'
+                          ? 'Google AI Rate Limit Reached'
+                          : diagnosticDetails?.errorType === 'OFFLINE_ERROR'
+                          ? 'Terminal Offline'
+                          : diagnosticDetails?.errorType === 'TIMEOUT_ERROR'
+                          ? 'OCR Extraction Timed Out'
+                          : diagnosticDetails?.errorType === 'PAYLOAD_TOO_LARGE'
+                          ? 'Image Payload Exceeds Limits'
+                          : diagnosticDetails?.errorType === 'NETWORK_ERROR'
+                          ? 'Network Connection Issue'
+                          : 'Extraction Error'}
+                      </h4>
+                      {diagnosticDetails?.status ? (
+                        <span className="px-2 py-0.5 rounded-md bg-rose-200/60 dark:bg-rose-900/80 text-rose-800 dark:text-rose-300 font-mono text-xs font-semibold">
+                          HTTP {diagnosticDetails.status}
+                        </span>
+                      ) : null}
+                      {diagnosticDetails?.errorType ? (
+                        <span className="px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-[11px]">
+                          {diagnosticDetails.errorType}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <p className="text-sm text-rose-900 dark:text-rose-200 mt-1 leading-relaxed">
+                      {errorMessage}
+                    </p>
+
+                    {/* Actionable Advice */}
+                    {diagnosticDetails?.errorType === 'AI_HIGH_DEMAND' && (
+                      <p className="text-xs text-amber-800 dark:text-amber-300 mt-1.5 font-medium flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5" />
+                        Temporary peak demand spikes usually clear in 5-10 seconds. Tap "Retry Extraction" below.
+                      </p>
+                    )}
+                    {diagnosticDetails?.errorType === 'TIMEOUT_ERROR' && (
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5">
+                        Tip: For large menus (5+ pages), ensure a stable connection or scan 2-3 pages at a time.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Primary Action Buttons */}
+                <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={handleStartAnalysis}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Retry Extraction
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagnosticDetails(prev => !prev)}
+                    className="px-3 py-2 rounded-xl bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 font-medium text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <span>Diagnostics</span>
+                    {showDiagnosticDetails ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorMessage(null);
+                      setDiagnosticDetails(null);
+                    }}
+                    className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 font-medium text-xs transition-all cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={handleStartAnalysis}
-                  className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium text-xs flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer flex-1 sm:flex-initial"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Retry Scan
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setErrorMessage(null)}
-                  className="px-2.5 py-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-medium text-xs transition-all cursor-pointer"
-                >
-                  Dismiss
-                </button>
-              </div>
+
+              {/* Collapsible Technical Diagnostics Drawer */}
+              {showDiagnosticDetails && diagnosticDetails && (
+                <div className="mt-4 pt-4 border-t border-rose-200 dark:border-rose-800/60">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                      Technical Diagnostic Details (No API keys or sensitive data)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const payload = JSON.stringify(diagnosticDetails, null, 2);
+                        navigator.clipboard?.writeText(payload);
+                        setCopiedDiagnostic(true);
+                        setTimeout(() => setCopiedDiagnostic(false), 2500);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-700 dark:text-slate-300 text-xs font-mono transition-colors cursor-pointer"
+                    >
+                      {copiedDiagnostic ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy Diagnostic JSON</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono bg-white dark:bg-slate-900 rounded-xl p-3 border border-slate-200 dark:border-slate-800">
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase">Stage</span>
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold">{diagnosticDetails.stage}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase">Endpoint</span>
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold truncate block" title={diagnosticDetails.endpoint}>
+                        {diagnosticDetails.endpoint}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase">Status</span>
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold">
+                        {diagnosticDetails.status ? `${diagnosticDetails.status} ${diagnosticDetails.statusText}` : 'Network Fail (0)'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase">Request ID</span>
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold truncate block" title={diagnosticDetails.requestId}>
+                        {diagnosticDetails.requestId}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

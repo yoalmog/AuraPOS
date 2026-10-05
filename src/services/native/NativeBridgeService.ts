@@ -142,7 +142,7 @@ export class NativeBridgeService {
     );
   }
 
-  private static callNativeAsync<T>(executor: (callbackId: string) => void): Promise<T> {
+  private static callNativeAsync<T>(executor: (callbackId: string) => void, timeoutMs: number = 15000): Promise<T> {
     return new Promise((resolve, reject) => {
       if (!this.isNativeAndroid()) {
         reject(
@@ -156,8 +156,8 @@ export class NativeBridgeService {
       const callbackId = `cb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const timeout = setTimeout(() => {
         delete window.__AuraPOSNativeCallbacks?.[callbackId];
-        reject(new Error('Native hardware bridge response timed out.'));
-      }, 10000);
+        reject(new Error(`Native hardware bridge response timed out after ${timeoutMs / 1000}s.`));
+      }, timeoutMs);
 
       window.__AuraPOSNativeCallbacks![callbackId] = (result: any) => {
         clearTimeout(timeout);
@@ -547,7 +547,7 @@ export class NativeBridgeService {
 
       return NativeBridgeService.callNativeAsync(callbackId => {
         window.AndroidPOSNative!.analyzeMenu!(payloadJson, callbackId);
-      });
+      }, 120000);
     }
   };
 

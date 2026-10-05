@@ -89,14 +89,14 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
 
   return (
     <>
-      <header className="h-16 theme-surface border-b border-[var(--theme-border)] px-4 sm:px-6 flex items-center justify-between gap-3 sticky top-0 z-10 shrink-0">
+      <header className="h-16 theme-surface border-b border-[var(--theme-border)] px-3 sm:px-5 flex items-center justify-between gap-2 sm:gap-3 sticky top-0 z-30 shrink-0 select-none">
         {/* Left: Mobile Menu / Collapse Toggle & Route Title */}
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          {/* Mobile Hamburger Drawer Toggle */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+          {/* Mobile Hamburger Drawer Toggle (Touch target >= 48px) */}
           <button
             type="button"
             onClick={toggleMobileSidebar}
-            className="p-2 -ml-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors lg:hidden shrink-0"
+            className="min-h-[48px] min-w-[48px] p-3 -ml-2 text-[var(--theme-text-secondary)] hover:text-[var(--theme-text-primary)] hover:bg-[var(--theme-surface-variant)] rounded-xl transition-colors lg:hidden shrink-0 flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]"
             title="Open navigation menu"
             aria-label="Open navigation menu"
           >
@@ -107,23 +107,23 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
           <button
             type="button"
             onClick={toggleSidebar}
-            className="hidden lg:flex p-2 -ml-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors shrink-0"
+            className="hidden lg:flex min-h-[44px] min-w-[44px] p-2.5 -ml-1 text-[var(--theme-text-secondary)] hover:text-[var(--theme-text-primary)] hover:bg-[var(--theme-surface-variant)] rounded-xl transition-colors shrink-0 items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]"
             title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isSidebarCollapsed ? (
-              <PanelLeftOpen className="w-5 h-5 text-blue-600" />
+              <PanelLeftOpen className="w-5 h-5 text-[var(--theme-primary)]" />
             ) : (
-              <PanelLeftClose className="w-5 h-5 text-slate-500" />
+              <PanelLeftClose className="w-5 h-5" />
             )}
           </button>
 
-          <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight truncate whitespace-nowrap">
+          <h1 className="text-base sm:text-lg font-bold text-[var(--theme-text-primary)] tracking-tight truncate whitespace-nowrap">
             {getPageTitle()}
-          </h2>
+          </h1>
           {activeRoute === 'pos' && cartItems.length > 0 && (
-            <span className="hidden md:inline-flex text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200 shrink-0">
-              {cartItems.reduce((acc, i) => acc + i.quantity, 0)} {t('header.itemsInTicket', 'items in ticket')}
+            <span className="hidden md:inline-flex text-xs font-semibold text-[var(--theme-primary)] bg-[var(--theme-surface-variant)] px-2.5 py-0.5 rounded-md border border-[var(--theme-border)] shrink-0">
+              {cartItems.reduce((acc, i) => acc + i.quantity, 0)} {t('header.itemsInTicket', 'items')}
             </span>
           )}
         </div>
@@ -132,7 +132,7 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
         {activeRoute === 'pos' && (
           <div className="flex-1 max-w-md mx-2 relative">
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Search className="w-4 h-4 text-[var(--theme-text-secondary)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 id="pos-search-input"
                 type="text"
@@ -140,19 +140,21 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
                 onChange={e => setSearchTerm(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={t('header.search', 'Search products by name, SKU, or scan barcode...')}
-                className="w-full bg-slate-50 hover:bg-slate-100/80 focus:bg-white text-slate-800 text-xs rounded-xl pl-9 pr-16 py-2.5 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all placeholder:text-slate-400"
+                className="w-full bg-[var(--theme-bg)] hover:bg-[var(--theme-surface-variant)] focus:bg-[var(--theme-surface)] text-[var(--theme-text-primary)] text-xs rounded-xl pl-9 pr-16 py-2.5 border border-[var(--theme-border)] focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)] transition-all placeholder:text-[var(--theme-text-disabled)]"
+                aria-label="Search products or scan barcode"
               />
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                 {searchTerm && (
                   <button
                     onClick={() => setSearchTerm('')}
-                    className="p-1 text-slate-400 hover:text-slate-600 rounded"
+                    className="p-1 text-[var(--theme-text-secondary)] hover:text-[var(--theme-text-primary)] rounded cursor-pointer"
                     title="Clear search"
+                    aria-label="Clear search input"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <span className="text-[10px] font-mono text-slate-400 bg-slate-200/70 px-1.5 py-0.5 rounded">
+                <span className="text-[10px] font-mono text-[var(--theme-text-secondary)] bg-[var(--theme-surface-variant)] px-1.5 py-0.5 rounded border border-[var(--theme-border)]">
                   F2
                 </span>
               </div>
@@ -160,16 +162,17 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
           </div>
         )}
 
-        {/* Right Action Icons */}
-        <div className="flex items-center gap-2">
+        {/* Right Action Icons with accessible min 48px touch targets */}
+        <div className="flex items-center gap-1 sm:gap-2">
           {/* Held Orders Quick Access */}
           {activeRoute === 'pos' && (
             <button
               onClick={() => setOpenHeldOrdersModal(true)}
-              className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors"
+              className="relative flex items-center gap-1.5 min-h-[44px] px-3 py-2 text-xs font-semibold text-[var(--theme-text-primary)] bg-[var(--theme-surface)] hover:bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl transition-colors cursor-pointer"
               title="Held Orders (F5)"
+              aria-label={`Held Orders: ${heldOrders.length} orders on hold. Press F5.`}
             >
-              <Clock className="w-4 h-4 text-slate-500" />
+              <Clock className="w-4 h-4 text-[var(--theme-text-secondary)]" />
               <span className="hidden md:inline">{t('header.heldOrders', 'Held Orders')}</span>
               {heldOrders.length > 0 && (
                 <span className="w-4 h-4 text-[10px] font-bold bg-amber-500 text-white rounded-full flex items-center justify-center">
@@ -183,61 +186,66 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
           {activeRoute === 'pos' && (
             <button
               onClick={() => setOpenCustomerModal(true)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-xl transition-all ${
+              className={`flex items-center gap-1.5 min-h-[44px] px-3 py-2 text-xs font-medium border rounded-xl transition-all cursor-pointer ${
                 activeCustomer
-                  ? 'border-blue-300 bg-blue-50 text-blue-900 font-semibold'
-                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                  ? 'border-[var(--theme-primary)] bg-[var(--theme-surface-variant)] text-[var(--theme-primary)] font-semibold'
+                  : 'border-[var(--theme-border)] bg-[var(--theme-surface)] text-[var(--theme-text-primary)] hover:bg-[var(--theme-surface-variant)]'
               }`}
               title="Customer Loyalty (F3)"
+              aria-label={activeCustomer ? `Customer: ${activeCustomer.firstName} ${activeCustomer.lastName}` : 'Add Customer Loyalty (F3)'}
             >
-              <Users className="w-4 h-4 text-blue-600" />
+              <Users className="w-4 h-4 text-[var(--theme-primary)]" />
               <span className="max-w-[120px] truncate">
                 {activeCustomer ? `${activeCustomer.firstName} ${activeCustomer.lastName}` : t('header.addCustomer', 'Add Customer')}
               </span>
             </button>
           )}
 
-          {/* Network connectivity status */}
+          {/* Network connectivity status with Icon + Text (Not color alone) */}
           <div
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-colors ${
+            className={`flex items-center gap-1.5 min-h-[40px] px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
               isOffline
-                ? 'bg-amber-50 border-amber-300 text-amber-900'
-                : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400'
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
             }`}
-            title={isOffline ? 'Network Offline' : 'Network Online'}
+            title={isOffline ? 'Network Offline: Local terminal database active' : 'Network Online: Cloud sync connected'}
+            aria-label={isOffline ? 'Network status: Offline. Operating in local database mode.' : 'Network status: Online and synchronized.'}
+            role="status"
           >
-            {isOffline ? <WifiOff className="w-3.5 h-3.5 text-amber-600" /> : <Wifi className="w-3.5 h-3.5 text-emerald-600" />}
+            {isOffline ? <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400" /> : <Wifi className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
             <span className="hidden lg:inline">{isOffline ? t('header.offline', 'Offline') : t('header.online', 'Online')}</span>
           </div>
 
-          {/* Keyboard Shortcuts Trigger */}
+          {/* Keyboard Shortcuts Trigger (48px Touch Target) */}
           <button
             onClick={() => setShowShortcuts(true)}
-            className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors border border-transparent hover:border-slate-200"
+            className="min-h-[48px] min-w-[48px] p-3 text-[var(--theme-text-secondary)] hover:text-[var(--theme-text-primary)] hover:bg-[var(--theme-surface-variant)] rounded-xl transition-colors border border-transparent hover:border-[var(--theme-border)] flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]"
             title="POS Keyboard Shortcuts"
-            aria-label="Keyboard Shortcuts"
+            aria-label="POS Keyboard input shortcuts"
           >
             <Keyboard className="w-4 h-4" />
           </button>
 
-          {/* Language Selector Dropdown */}
+          {/* Language Selector Dropdown (48px Touch Target) */}
           <div className="relative">
             <button
               onClick={() => setShowLanguageMenu(prev => !prev)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-slate-100 border border-slate-200 transition-colors text-xs font-semibold text-slate-700"
+              className="flex items-center gap-1.5 min-h-[44px] px-2.5 py-2 rounded-xl hover:bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] transition-colors text-xs font-semibold text-[var(--theme-text-primary)] cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]"
               title="Select Language"
+              aria-label={`Language selector. Current language: ${currentLang.nativeName}`}
+              aria-expanded={showLanguageMenu}
             >
               <span className="text-sm">{currentLang.flag}</span>
               <span className="hidden sm:inline">{currentLang.code.toUpperCase()}</span>
-              <ChevronDown className="w-3 h-3 text-slate-400" />
+              <ChevronDown className="w-3.5 h-3.5 text-[var(--theme-text-secondary)]" />
             </button>
 
             {showLanguageMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 animate-fadeIn">
-                <div className="px-3 py-1 border-b border-slate-100 text-[10px] uppercase font-bold text-slate-400">
+              <div className="absolute right-0 mt-2 w-52 theme-surface rounded-xl shadow-xl border border-[var(--theme-border)] py-1.5 z-50 animate-fadeIn">
+                <div className="px-3 py-1.5 border-b border-[var(--theme-divider)] text-[10px] uppercase font-bold text-[var(--theme-text-secondary)]">
                   {t('header.language', 'Language')}
                 </div>
-                <div className="py-1 max-h-60 overflow-y-auto">
+                <div className="py-1 max-h-64 overflow-y-auto">
                   {SUPPORTED_LANGUAGES.map(lang => (
                     <button
                       key={lang.code}
@@ -245,17 +253,18 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
                         setLanguage(lang.code);
                         setShowLanguageMenu(false);
                       }}
-                      className={`w-full flex items-center justify-between px-3 py-1.5 text-xs text-left transition-colors ${
+                      className={`w-full flex items-center justify-between px-3 py-2 text-xs text-left transition-colors cursor-pointer ${
                         lang.code === language
-                          ? 'bg-blue-50 text-blue-700 font-bold'
-                          : 'text-slate-700 hover:bg-slate-50'
+                          ? 'bg-[var(--theme-surface-variant)] text-[var(--theme-primary)] font-bold'
+                          : 'text-[var(--theme-text-primary)] hover:bg-[var(--theme-surface-variant)]'
                       }`}
+                      aria-label={`Switch language to ${lang.nativeName}`}
                     >
                       <div className="flex items-center gap-2">
                         <span className="text-sm">{lang.flag}</span>
                         <span>{lang.nativeName}</span>
                       </div>
-                      {lang.code === language && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                      {lang.code === language && <Check className="w-4 h-4 text-[var(--theme-primary)]" />}
                     </button>
                   ))}
                 </div>
@@ -269,7 +278,7 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
               href={window.location.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors border border-slate-200"
+              className="min-h-[44px] min-w-[44px] p-2.5 text-[var(--theme-text-secondary)] hover:text-[var(--theme-primary)] hover:bg-[var(--theme-surface-variant)] rounded-xl transition-colors border border-[var(--theme-border)] flex items-center justify-center cursor-pointer"
               title={t('printers.openFullTab', 'Open in Dedicated Tab (Enables Bluetooth)')}
               aria-label="Open in Dedicated Tab"
             >
@@ -277,24 +286,27 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
             </a>
           )}
 
-          {/* Cashier profile menu */}
+          {/* Cashier profile menu (48px touch target) */}
           <div className="relative">
             <button
               onClick={() => setShowEmployeeMenu(prev => !prev)}
-              className="flex items-center gap-2 pl-2 pr-1.5 py-1 rounded-xl hover:bg-slate-100 border border-slate-200 transition-colors"
+              className="flex items-center gap-2 min-h-[44px] pl-2 pr-2 py-1 rounded-xl hover:bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]"
+              title={`Cashier: ${currentEmployee.name}`}
+              aria-label={`User session. Current cashier: ${currentEmployee.name}`}
+              aria-expanded={showEmployeeMenu}
             >
-              <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+              <div className="w-7 h-7 rounded-lg bg-[var(--theme-primary)] text-[var(--theme-button-text)] flex items-center justify-center text-xs font-bold shrink-0">
                 {currentEmployee.name.split(' ').map(n => n[0]).join('')}
               </div>
-              <span className="text-xs font-medium text-slate-800 hidden sm:inline">{currentEmployee.name}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              <span className="text-xs font-semibold text-[var(--theme-text-primary)] hidden sm:inline">{currentEmployee.name}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-[var(--theme-text-secondary)]" />
             </button>
 
             {/* Dropdown for Switching Staff */}
             {showEmployeeMenu && (
-              <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50">
-                <div className="px-3 py-1.5 border-b border-slate-100">
-                  <p className="text-[11px] font-semibold uppercase text-slate-400">{t('header.switchCashier', 'Switch Cashier')}</p>
+              <div className="absolute right-0 mt-2 w-60 theme-surface rounded-xl shadow-xl border border-[var(--theme-border)] py-2 z-50">
+                <div className="px-3.5 py-1.5 border-b border-[var(--theme-divider)]">
+                  <p className="text-[11px] font-semibold uppercase text-[var(--theme-text-secondary)]">{t('header.switchCashier', 'Switch Cashier')}</p>
                 </div>
                 <div className="py-1">
                   {employees.map(emp => (
@@ -304,16 +316,17 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
                         switchEmployee(emp.id);
                         setShowEmployeeMenu(false);
                       }}
-                      className="w-full flex items-center justify-between px-3 py-2 text-xs text-left text-slate-700 hover:bg-slate-50 transition-colors"
+                      className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs text-left text-[var(--theme-text-primary)] hover:bg-[var(--theme-surface-variant)] transition-colors cursor-pointer"
+                      aria-label={`Switch cashier to ${emp.name}`}
                     >
-                      <div className="flex items-center gap-2">
-                        <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                      <div className="flex items-center gap-2.5">
+                        <UserCheck className="w-4 h-4 text-[var(--theme-text-secondary)]" />
                         <div>
-                          <p className="font-medium text-slate-900">{emp.name}</p>
-                          <p className="text-[10px] text-slate-500 capitalize">{emp.role}</p>
+                          <p className="font-semibold text-[var(--theme-text-primary)]">{emp.name}</p>
+                          <p className="text-[10px] text-[var(--theme-text-secondary)] capitalize">{emp.role}</p>
                         </div>
                       </div>
-                      {emp.id === currentEmployee.id && <Check className="w-4 h-4 text-blue-600" />}
+                      {emp.id === currentEmployee.id && <Check className="w-4 h-4 text-[var(--theme-primary)]" />}
                     </button>
                   ))}
                 </div>

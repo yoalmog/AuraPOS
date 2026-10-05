@@ -337,16 +337,18 @@ export type ThemePaletteId =
   | 'blue'
   | 'emerald'
   | 'purple'
+  | 'indigo'
+  | 'teal'
   | 'orange'
   | 'red'
-  | 'teal'
-  | 'slate'
   | 'rose'
-  | 'indigo'
+  | 'slate'
+  | 'premium-dark'
+  | 'high-contrast'
   | 'custom';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type BackgroundStyle = 'solid' | 'soft-tint' | 'gradient' | 'pattern' | 'minimal';
+export type BackgroundStyle = 'plain' | 'solid' | 'soft-tint' | 'gradient' | 'pattern' | 'minimal';
 export type PatternStyle = 'dots' | 'grid' | 'mesh' | 'none';
 
 export interface CustomThemeColors {

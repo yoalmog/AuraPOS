@@ -22,14 +22,17 @@ import {
 
 export interface SemanticColorTokens {
   primary: string;
+  primaryContainer: string;
   primaryVariant: string;
   secondary: string;
+  secondaryContainer: string;
   accent: string;
   background: string;
   backgroundSecondary: string;
   surface: string;
   surfaceVariant: string;
   card: string;
+  cardSelected: string;
   cardBorder: string;
   textPrimary: string;
   textSecondary: string;
@@ -38,6 +41,8 @@ export interface SemanticColorTokens {
   divider: string;
   icon: string;
   button: string;
+  buttonPrimary: string;
+  buttonSecondary: string;
   buttonText: string;
   buttonHover: string;
   selected: string;
@@ -51,6 +56,9 @@ export interface SemanticColorTokens {
   errorBg: string;
   info: string;
   infoBg: string;
+  offline: string;
+  online: string;
+  pending: string;
   badgeBg: string;
   badgeText: string;
 }
@@ -62,8 +70,59 @@ export interface ThemePaletteDefinition {
   primaryHex: string;
   secondaryHex: string;
   accentHex: string;
-  light: SemanticColorTokens;
-  dark: SemanticColorTokens;
+  light: Partial<SemanticColorTokens>;
+  dark: Partial<SemanticColorTokens>;
+}
+
+// Helper to ensure all required semantic tokens are fully populated
+export function fillTokens(t: Partial<SemanticColorTokens>): SemanticColorTokens {
+  const primary = t.primary || '#2563eb';
+  const secondary = t.secondary || '#3b82f6';
+  const surfaceVariant = t.surfaceVariant || '#f0f5ff';
+  const cardBorder = t.cardBorder || '#dbeafe';
+
+  return {
+    primary,
+    primaryContainer: t.primaryContainer || surfaceVariant,
+    primaryVariant: t.primaryVariant || primary,
+    secondary,
+    secondaryContainer: t.secondaryContainer || cardBorder,
+    accent: t.accent || secondary,
+    background: t.background || '#f4f7fc',
+    backgroundSecondary: t.backgroundSecondary || '#eaf0fa',
+    surface: t.surface || '#ffffff',
+    surfaceVariant,
+    card: t.card || '#ffffff',
+    cardSelected: t.cardSelected || t.selected || surfaceVariant,
+    cardBorder,
+    textPrimary: t.textPrimary || '#0f172a',
+    textSecondary: t.textSecondary || '#475569',
+    textDisabled: t.textDisabled || '#94a3b8',
+    border: t.border || '#cbd5e1',
+    divider: t.divider || '#e2e8f0',
+    icon: t.icon || primary,
+    button: t.button || primary,
+    buttonPrimary: t.buttonPrimary || t.button || primary,
+    buttonSecondary: t.buttonSecondary || secondary,
+    buttonText: t.buttonText || '#ffffff',
+    buttonHover: t.buttonHover || primary,
+    selected: t.selected || surfaceVariant,
+    hover: t.hover || '#f1f5f9',
+    focus: t.focus || primary,
+    success: t.success || STATUS_COLORS.success,
+    successBg: t.successBg || STATUS_COLORS.successLight,
+    warning: t.warning || STATUS_COLORS.warning,
+    warningBg: t.warningBg || STATUS_COLORS.warningLight,
+    error: t.error || STATUS_COLORS.error,
+    errorBg: t.errorBg || STATUS_COLORS.errorLight,
+    info: t.info || STATUS_COLORS.info,
+    infoBg: t.infoBg || STATUS_COLORS.infoLight,
+    offline: t.offline || STATUS_COLORS.offline,
+    online: t.online || STATUS_COLORS.online,
+    pending: t.pending || STATUS_COLORS.pending,
+    badgeBg: t.badgeBg || surfaceVariant,
+    badgeText: t.badgeText || primary
+  };
 }
 
 // -------------------------------------------------------------
@@ -853,6 +912,138 @@ export const THEME_PALETTES: Record<ThemePaletteId, ThemePaletteDefinition> = {
       badgeBg: '#1a3e61',
       badgeText: '#bae6fd'
     }
+  },
+  'premium-dark': {
+    id: 'premium-dark',
+    name: 'Premium Dark',
+    description: 'Fine Dining, Craft Cocktail Bars & Luxury Boutique POS',
+    primaryHex: '#f59e0b',
+    secondaryHex: '#d97706',
+    accentHex: '#fbbf24',
+    light: fillTokens({
+      primary: '#d97706',
+      primaryContainer: '#fef3c7',
+      primaryVariant: '#b45309',
+      secondary: '#b45309',
+      secondaryContainer: '#fde68a',
+      accent: '#f59e0b',
+      background: '#f8f7f5',
+      backgroundSecondary: '#f0ede8',
+      surface: '#ffffff',
+      surfaceVariant: '#fdfbf7',
+      card: '#ffffff',
+      cardSelected: '#fef3c7',
+      cardBorder: '#e7e2d9',
+      textPrimary: '#1c1917',
+      textSecondary: '#57534e',
+      textDisabled: '#a8a29e',
+      border: '#d6d3d1',
+      divider: '#e7e5e4',
+      icon: '#d97706',
+      button: '#d97706',
+      buttonPrimary: '#d97706',
+      buttonSecondary: '#78350f',
+      buttonText: '#ffffff',
+      buttonHover: '#b45309',
+      selected: '#fef3c7',
+      hover: '#f5f5f4',
+      focus: '#d97706'
+    }),
+    dark: fillTokens({
+      primary: '#f59e0b',
+      primaryContainer: '#451a03',
+      primaryVariant: '#d97706',
+      secondary: '#fbbf24',
+      secondaryContainer: '#78350f',
+      accent: '#fde68a',
+      background: '#0d0f12',
+      backgroundSecondary: '#15181e',
+      surface: '#181c24',
+      surfaceVariant: '#222834',
+      card: '#181c24',
+      cardSelected: '#2a3344',
+      cardBorder: '#2e3748',
+      textPrimary: '#fafaf9',
+      textSecondary: '#a8a29e',
+      textDisabled: '#78716c',
+      border: '#3b475d',
+      divider: '#222834',
+      icon: '#fbbf24',
+      button: '#f59e0b',
+      buttonPrimary: '#f59e0b',
+      buttonSecondary: '#d97706',
+      buttonText: '#000000',
+      buttonHover: '#fbbf24',
+      selected: '#222834',
+      hover: '#1d232f',
+      focus: '#fbbf24'
+    })
+  },
+  'high-contrast': {
+    id: 'high-contrast',
+    name: 'High Contrast',
+    description: 'WCAG AAA Ultra-Legibility for Outdoor & Low-Vision POS',
+    primaryHex: '#000000',
+    secondaryHex: '#1e293b',
+    accentHex: '#0284c7',
+    light: fillTokens({
+      primary: '#000000',
+      primaryContainer: '#e2e8f0',
+      primaryVariant: '#1e293b',
+      secondary: '#1e293b',
+      secondaryContainer: '#cbd5e1',
+      accent: '#0369a1',
+      background: '#ffffff',
+      backgroundSecondary: '#f8fafc',
+      surface: '#ffffff',
+      surfaceVariant: '#f1f5f9',
+      card: '#ffffff',
+      cardSelected: '#e2e8f0',
+      cardBorder: '#000000',
+      textPrimary: '#000000',
+      textSecondary: '#0f172a',
+      textDisabled: '#64748b',
+      border: '#000000',
+      divider: '#000000',
+      icon: '#000000',
+      button: '#000000',
+      buttonPrimary: '#000000',
+      buttonSecondary: '#1e293b',
+      buttonText: '#ffffff',
+      buttonHover: '#334155',
+      selected: '#e2e8f0',
+      hover: '#f1f5f9',
+      focus: '#000000'
+    }),
+    dark: fillTokens({
+      primary: '#ffffff',
+      primaryContainer: '#1e293b',
+      primaryVariant: '#f8fafc',
+      secondary: '#f1f5f9',
+      secondaryContainer: '#334155',
+      accent: '#38bdf8',
+      background: '#000000',
+      backgroundSecondary: '#0a0a0a',
+      surface: '#0a0a0a',
+      surfaceVariant: '#171717',
+      card: '#0a0a0a',
+      cardSelected: '#262626',
+      cardBorder: '#ffffff',
+      textPrimary: '#ffffff',
+      textSecondary: '#f8fafc',
+      textDisabled: '#94a3b8',
+      border: '#ffffff',
+      divider: '#ffffff',
+      icon: '#ffffff',
+      button: '#ffffff',
+      buttonPrimary: '#ffffff',
+      buttonSecondary: '#e2e8f0',
+      buttonText: '#000000',
+      buttonHover: '#f8fafc',
+      selected: '#262626',
+      hover: '#171717',
+      focus: '#ffffff'
+    })
   }
 };
 
@@ -1062,7 +1253,8 @@ export class ThemeService {
         ? buildCustomPalette(appearance.customColors)
         : THEME_PALETTES[appearance.palette] || THEME_PALETTES.blue;
 
-    return effectiveMode === 'dark' ? paletteDef.dark : paletteDef.light;
+    const raw = effectiveMode === 'dark' ? paletteDef.dark : paletteDef.light;
+    return fillTokens(raw);
   }
 
   /**
@@ -1093,8 +1285,10 @@ export class ThemeService {
 
     // 2. Inject Semantic Theme CSS Variables
     root.style.setProperty('--theme-primary', tokens.primary);
+    root.style.setProperty('--theme-primary-container', tokens.primaryContainer);
     root.style.setProperty('--theme-primary-variant', tokens.primaryVariant);
     root.style.setProperty('--theme-secondary', tokens.secondary);
+    root.style.setProperty('--theme-secondary-container', tokens.secondaryContainer);
     root.style.setProperty('--theme-accent', tokens.accent);
 
     // Background & Surfaces
@@ -1103,6 +1297,7 @@ export class ThemeService {
     root.style.setProperty('--theme-surface', tokens.surface);
     root.style.setProperty('--theme-surface-variant', tokens.surfaceVariant);
     root.style.setProperty('--theme-card', tokens.card);
+    root.style.setProperty('--theme-card-selected', tokens.cardSelected);
     root.style.setProperty('--theme-card-border', tokens.cardBorder);
 
     // Typography
@@ -1117,6 +1312,8 @@ export class ThemeService {
 
     // Buttons & Interactivity
     root.style.setProperty('--theme-button', tokens.button);
+    root.style.setProperty('--theme-button-primary', tokens.buttonPrimary);
+    root.style.setProperty('--theme-button-secondary', tokens.buttonSecondary);
     root.style.setProperty('--theme-button-text', tokens.buttonText);
     root.style.setProperty('--theme-button-hover', tokens.buttonHover);
     root.style.setProperty('--theme-selected', tokens.selected);
@@ -1128,6 +1325,9 @@ export class ThemeService {
     root.style.setProperty('--theme-status-warning', tokens.warning);
     root.style.setProperty('--theme-status-error', tokens.error);
     root.style.setProperty('--theme-status-info', tokens.info);
+    root.style.setProperty('--theme-status-offline', tokens.offline);
+    root.style.setProperty('--theme-status-online', tokens.online);
+    root.style.setProperty('--theme-status-pending', tokens.pending);
 
     // 3. Backward-compatible Tailwind primary color mappings
     root.style.setProperty('--color-primary', tokens.primary);
