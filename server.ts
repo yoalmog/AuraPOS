@@ -24,33 +24,87 @@ app.use((req, res, next) => {
   next();
 });
 
+// Health check endpoint for network reachability testing
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'AuraPOS Backend',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Helper to repair and parse potentially truncated JSON responses from large 5-page scans
+function repairAndParseMenuJson(rawText: string): any {
+  let cleaned = rawText.trim();
+  cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch (err: any) {
+    console.warn('Initial JSON parse failed, attempting auto-repair for truncated output:', err?.message);
+
+    // Try finding the last valid object boundary
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (lastBrace > 0) {
+      let candidate = cleaned.substring(0, lastBrace + 1);
+
+      // Check if open brackets need closing
+      const openCurly = (candidate.match(/\{/g) || []).length;
+      const closeCurly = (candidate.match(/\}/g) || []).length;
+      const openSquare = (candidate.match(/\[/g) || []).length;
+      const closeSquare = (candidate.match(/\]/g) || []).length;
+
+      // Close open arrays then open objects
+      for (let i = 0; i < Math.max(0, openSquare - closeSquare); i++) {
+        candidate += ']';
+      }
+      for (let i = 0; i < Math.max(0, openCurly - closeCurly); i++) {
+        candidate += '}';
+      }
+
+      try {
+        const repaired = JSON.parse(candidate);
+        console.log('JSON auto-repair succeeded! Extracted partial/full menu items.');
+        return repaired;
+      } catch (repairErr) {
+        console.warn('Bracket balancing failed, re-throwing original parse error:', repairErr);
+      }
+    }
+
+    throw err;
+  }
+}
+
 // AI Menu Scanner API endpoint
 app.post('/api/menu/analyze', async (req, res) => {
+  const reqStartTime = Date.now();
+  const requestId = `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
   try {
     const pages: Array<{ dataUrl: string; mimeType?: string; rotation?: number }> = req.body.pages || [];
 
-    if (!pages || pages.length === 0) {
-      return res.status(400).json({ success: false, error: 'No menu images provided.' });
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
-    if (!apiKey) {
-      return res.status(500).json({
+    if (!Array.isArray(pages) || pages.length === 0) {
+      return res.status(400).json({
         success: false,
-        error: 'GEMINI_API_KEY is not configured on the server. Please check your environment configuration.'
+        error: 'No menu images provided. Please provide at least one menu page photo.',
+        errorType: 'MISSING_PAYLOAD',
+        requestId
       });
     }
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build'
-        }
+    // Validate images
+    const imageParts: Array<{ inlineData: { mimeType: string; data: string } }> = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      if (!page.dataUrl || typeof page.dataUrl !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: `Page ${i + 1} has empty or invalid image data.`,
+          errorType: 'INVALID_IMAGE_PAYLOAD',
+          requestId
+        });
       }
-    });
 
-    const imageParts = pages.map((page) => {
       let cleanBase64 = page.dataUrl;
       let mime = page.mimeType || 'image/jpeg';
 
@@ -63,12 +117,42 @@ app.post('/api/menu/analyze', async (req, res) => {
         cleanBase64 = parts[1];
       }
 
-      return {
+      // Check clean base64 data
+      cleanBase64 = cleanBase64.trim();
+      if (cleanBase64.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: `Page ${i + 1} contains empty base64 image data.`,
+          errorType: 'EMPTY_IMAGE_DATA',
+          requestId
+        });
+      }
+
+      imageParts.push({
         inlineData: {
           mimeType: mime,
           data: cleanBase64
         }
-      };
+      });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: 'GEMINI_API_KEY is not configured on the server. Please check your environment configuration.',
+        errorType: 'CONFIG_ERROR',
+        requestId
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
     });
 
     const promptText = `
@@ -96,126 +180,156 @@ CRITICAL EXTRACTION INSTRUCTIONS:
    - Extract modifiers/extras if mentioned (e.g. "Pan al Ajo", "Extra queso", "Adicional").
    - Detect dietary tags: isSpicy (picante/spicy/chili), isVegetarian (vegetariana/ecológica), isGlutenFree, isAlcoholic (cerveza, coctel, pisco, vino, mojito, piña colada, vodka, ron).
 4. Deduplicate products if the same item appears across multiple scanned pages.
-5. Return clean, rich structured JSON adhering to the schema.
-`;
-
-    const schema = {
-      type: Type.OBJECT,
-      properties: {
-        menuTitle: { type: Type.STRING, description: 'Restaurant or menu title if visible' },
-        detectedCurrency: { type: Type.STRING, description: 'Currency symbol or code (e.g. S/, $, €, £)' },
-        notes: { type: Type.STRING, description: 'Any special notes, promotions or dietary remarks' },
-        categories: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING, description: 'Category name' },
-              description: { type: Type.STRING, description: 'Category description' },
-              color: { type: Type.STRING, description: 'Hex color code' },
-              iconName: { type: Type.STRING, description: 'Lucide icon name' },
-              autoPrintKitchen: { type: Type.BOOLEAN, description: 'Whether category items route to kitchen' }
-            }
-          }
-        },
-        products: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING, description: 'Product name' },
-              categoryName: { type: Type.STRING, description: 'Category name' },
-              description: { type: Type.STRING, description: 'Product description' },
-              price: { type: Type.NUMBER, description: 'Base price as numeric float' },
-              cost: { type: Type.NUMBER, description: 'Estimated ingredient cost' },
-              unit: { type: Type.STRING, description: 'Unit: item, glass, cup, portion, etc.' },
-              sku: { type: Type.STRING, description: 'Generated SKU' },
-              isSpicy: { type: Type.BOOLEAN },
-              isVegetarian: { type: Type.BOOLEAN },
-              isGlutenFree: { type: Type.BOOLEAN },
-              isAlcoholic: { type: Type.BOOLEAN },
-              variants: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING, description: 'Variant / size name' },
-                    price: { type: Type.NUMBER, description: 'Price for variant' },
-                    sku: { type: Type.STRING }
-                  }
-                }
-              },
-              modifiers: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING, description: 'Modifier group name' },
-                    required: { type: Type.BOOLEAN },
-                    options: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          name: { type: Type.STRING, description: 'Option name' },
-                          priceDelta: { type: Type.NUMBER, description: 'Price increase' }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+5. Return ONLY pure valid JSON in the following exact format:
+{
+  "menuTitle": "Restaurant or Menu Title",
+  "detectedCurrency": "$ or S/ or €",
+  "notes": "Any special notes or promos",
+  "categories": [
+    {
+      "name": "Category Name",
+      "description": "Short description",
+      "color": "#2563EB",
+      "iconName": "Utensils",
+      "autoPrintKitchen": true
+    }
+  ],
+  "products": [
+    {
+      "name": "Item Name",
+      "categoryName": "Category Name",
+      "description": "Item ingredients and description",
+      "price": 12.50,
+      "cost": 6.00,
+      "unit": "portion",
+      "sku": "ITEM-101",
+      "isSpicy": false,
+      "isVegetarian": false,
+      "isGlutenFree": false,
+      "isAlcoholic": false,
+      "variants": [
+        { "name": "Regular", "price": 12.50, "sku": "ITEM-101-REG" }
+      ],
+      "modifiers": [
+        {
+          "name": "Options",
+          "required": false,
+          "options": [
+            { "name": "Extra sauce", "priceDelta": 1.50 }
+          ]
         }
-      }
-    };
+      ]
+    }
+  ]
+}
+`;
 
     let response: any = null;
     let lastError: any = null;
-    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+    let successfulModel = '';
+
+    // Models supported by @google/genai SDK in priority order
+    const modelsToTry = [
+      'gemini-flash-lite-latest',
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.8-flash'
+    ];
 
     for (const modelName of modelsToTry) {
       try {
-        response = await ai.models.generateContent({
+        console.log(`[AI_MENU_SCAN] Attempting OCR with model: ${modelName}`);
+
+        // Set a 25s timeout per attempt so unresponsive models fail-fast to the next candidate
+        const callPromise = ai.models.generateContent({
           model: modelName,
           contents: {
             parts: [...imageParts, { text: promptText }]
           },
           config: {
             responseMimeType: 'application/json',
-            responseSchema: schema
+            maxOutputTokens: 16384,
+            temperature: 0.1
           }
         });
 
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout after 25s waiting for model ${modelName}`)), 25000)
+        );
+
+        response = await Promise.race([callPromise, timeoutPromise]);
+
         if (response && response.text) {
+          successfulModel = modelName;
           break;
         }
       } catch (e: any) {
-        console.warn(`Server: Model ${modelName} failed, trying next:`, e?.message || e);
         lastError = e;
+        const status = e?.status || e?.code || 0;
+        const msg = e?.message || String(e);
+        console.warn(`[AI_MENU_SCAN] Model ${modelName} failed (status ${status}):`, msg);
+      }
+
+      if (response && response.text) {
+        break;
       }
     }
 
     if (!response || !response.text) {
-      throw lastError || new Error('All AI models failed to process menu.');
+      const is503 = lastError?.status === 503 || String(lastError?.message).includes('503');
+      const is429 = lastError?.status === 429 || String(lastError?.message).includes('429');
+
+      return res.status(is503 ? 503 : is429 ? 429 : 500).json({
+        success: false,
+        error: is503
+          ? 'Google AI models are currently experiencing temporary high demand spikes. Please wait a few seconds and tap Retry.'
+          : is429
+          ? 'Google AI rate limit reached. Please wait a few seconds and tap Retry.'
+          : (lastError?.message || 'All AI models failed to process the menu.'),
+        errorType: is503 ? 'AI_HIGH_DEMAND' : is429 ? 'AI_RATE_LIMIT' : 'AI_PROVIDER_ERROR',
+        status: is503 ? 503 : is429 ? 429 : 500,
+        requestId,
+        timingMs: Date.now() - reqStartTime
+      });
     }
 
     const textOutput = response.text || '{}';
-    let parsedData;
+    let parsedData: any;
     try {
-      parsedData = JSON.parse(textOutput);
-    } catch (e) {
-      const cleaned = textOutput.replace(/```json/gi, '').replace(/```/g, '').trim();
-      parsedData = JSON.parse(cleaned);
+      parsedData = repairAndParseMenuJson(textOutput);
+    } catch (parseErr: any) {
+      console.error('[AI_MENU_SCAN] Failed to parse model output:', parseErr);
+      return res.status(500).json({
+        success: false,
+        error: `Could not parse AI response into structured catalog: ${parseErr?.message}`,
+        errorType: 'JSON_PARSE_ERROR',
+        requestId,
+        timingMs: Date.now() - reqStartTime
+      });
     }
 
-    return res.json({ success: true, data: parsedData });
+    // Ensure categories and products exist in returned data
+    if (!parsedData.categories) parsedData.categories = [];
+    if (!parsedData.products) parsedData.products = [];
+
+    const timingMs = Date.now() - reqStartTime;
+    console.log(`[AI_MENU_SCAN] Success! Model: ${successfulModel}, Categories: ${parsedData.categories.length}, Products: ${parsedData.products.length}, Time: ${timingMs}ms`);
+
+    return res.json({
+      success: true,
+      data: parsedData,
+      modelUsed: successfulModel,
+      requestId,
+      timingMs
+    });
   } catch (err: any) {
     console.error('Menu Scanner AI error:', err);
     return res.status(500).json({
       success: false,
-      error: err?.message || 'Failed to process menu image with AI.'
+      error: err?.message || 'Failed to process menu image with AI.',
+      errorType: 'SERVER_ERROR',
+      requestId,
+      timingMs: Date.now() - reqStartTime
     });
   }
 });

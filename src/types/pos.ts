@@ -376,6 +376,7 @@ export interface StoreSettings {
   themePattern?: PatternStyle;
   themeAccentColor?: string;
   themeCustomColors?: CustomThemeColors;
+  apiServerUrl?: string;
   language?: string;
   address: string;
   city: string;

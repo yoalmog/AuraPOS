@@ -185,19 +185,11 @@ export const MenuScannerView: React.FC = () => {
     try {
       setCurrentStep('analyzing');
       setErrorMessage(null);
-      setAnalysisProgressStage('Preprocessing high-resolution menu images...');
+      setAnalysisProgressStage('Validating menu images...');
 
-      const stageTimer1 = setTimeout(() => {
-        setAnalysisProgressStage('Gemini Vision OCR & Multilingual Text Recognition...');
-      }, 1500);
-
-      const stageTimer2 = setTimeout(() => {
-        setAnalysisProgressStage('Parsing categories, products, prices, sizes & add-ons...');
-      }, 3500);
-
-      const result = await MenuScannerApi.analyzeMenu(pages);
-      clearTimeout(stageTimer1);
-      clearTimeout(stageTimer2);
+      const result = await MenuScannerApi.analyzeMenu(pages, (stage) => {
+        setAnalysisProgressStage(stage);
+      });
 
       if (!result.success || !result.data) {
         throw new Error(result.error || 'Failed to extract menu data.');
@@ -227,12 +219,13 @@ export const MenuScannerView: React.FC = () => {
       });
     } catch (err: any) {
       console.error('Menu scan error:', err);
-      setErrorMessage(err.message || 'Error processing menu scan.');
+      const userMsg = err.message || 'Error processing menu scan.';
+      setErrorMessage(userMsg);
       setCurrentStep('capture');
       showToast({
         type: 'error',
         title: 'Scan Failed',
-        message: err.message || 'Could not parse menu. Please try with a clearer photo.'
+        message: userMsg
       });
     }
   };
@@ -383,11 +376,30 @@ export const MenuScannerView: React.FC = () => {
 
           {/* Error Message if any */}
           {errorMessage && (
-            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <h4 className="font-bold text-sm">Extraction Error</h4>
-                <p className="text-xs text-rose-700 mt-0.5">{errorMessage}</p>
+            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-bold text-sm">Extraction Error</h4>
+                  <p className="text-xs text-rose-700 mt-0.5">{errorMessage}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleStartAnalysis}
+                  className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium text-xs flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer flex-1 sm:flex-initial"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Retry Scan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setErrorMessage(null)}
+                  className="px-2.5 py-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-medium text-xs transition-all cursor-pointer"
+                >
+                  Dismiss
+                </button>
               </div>
             </div>
           )}
