@@ -3,8 +3,12 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,18 +21,22 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Request-ID');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
   next();
 });
 
-// Health check endpoint for network reachability testing
-app.get('/api/health', (_req, res) => {
+// Diagnostic health check endpoints for Android reachability testing (Requirement 3)
+app.get(['/health', '/api/health'], (_req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
   res.json({
     status: 'ok',
-    service: 'AuraPOS Backend',
+    service: 'AuraPOS AI Backend',
+    aiServiceAvailable: !!apiKey,
+    activeModel: 'gemini-3.1-flash-lite',
+    environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
     timestamp: new Date().toISOString()
   });
 });
@@ -78,10 +86,16 @@ function repairAndParseMenuJson(rawText: string): any {
 // AI Menu Scanner API endpoint
 app.post('/api/menu/analyze', async (req, res) => {
   const reqStartTime = Date.now();
-  const requestId = `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const requestId =
+    (typeof req.body?.requestId === 'string' && req.body.requestId) ||
+    (typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id']) ||
+    `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+  res.setHeader('X-Request-ID', requestId);
 
   try {
     const pages: Array<{ dataUrl: string; mimeType?: string; rotation?: number }> = req.body.pages || [];
+    console.log(`[AuraPOS_AI_REQUEST] ${new Date().toISOString()} | Method: POST | Route: /api/menu/analyze | RequestId: ${requestId} | Pages: ${pages.length}`);
 
     if (!Array.isArray(pages) || pages.length === 0) {
       return res.status(400).json({

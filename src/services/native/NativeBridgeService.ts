@@ -67,6 +67,7 @@ declare global {
       stopBarcodeScanner: () => void;
 
       getDiagnostics: () => string;
+      checkBackendHealth?: (targetUrl: string, callbackId: string) => void;
       analyzeMenu?: (payloadJson: string, callbackId: string) => void;
       vibrate?: (durationMs: number) => void;
       announceForAccessibility?: (text: string) => void;
@@ -128,6 +129,19 @@ export interface HardwareDiagnosticsResult {
   networkAvailable?: boolean;
   appVersion?: string;
   statusMessage?: string;
+}
+
+export interface BackendHealthCheckResult {
+  success: boolean;
+  status: number;
+  latencyMs: number;
+  dnsOk?: boolean;
+  tlsOk?: boolean;
+  aiServiceAvailable?: boolean;
+  service?: string;
+  error?: string;
+  errorType?: string;
+  timestamp: string;
 }
 
 export class NativeBridgeService {
@@ -523,6 +537,104 @@ export class NativeBridgeService {
         return {
           isNativeAndroid: true,
           statusMessage: `Diagnostics error: ${e.message}`
+        };
+      }
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // AI Backend Connectivity Diagnostics (Requirement 3 & 4)
+  // --------------------------------------------------------------------------
+  static backendDiagnostics = {
+    testConnection: async (targetUrl: string): Promise<BackendHealthCheckResult> => {
+      const cleanUrl = targetUrl.trim().replace(/\/+$/, '');
+      const healthEndpoint =
+        cleanUrl.endsWith('/api/health') || cleanUrl.endsWith('/health')
+          ? cleanUrl
+          : `${cleanUrl}/api/health`;
+
+      // 1. If running inside native Android POS shell with NativeBridge:
+      if (
+        NativeBridgeService.isNativeAndroid() &&
+        window.AndroidPOSNative?.checkBackendHealth
+      ) {
+        try {
+          return await NativeBridgeService.callNativeAsync<BackendHealthCheckResult>(callbackId => {
+            window.AndroidPOSNative!.checkBackendHealth!(healthEndpoint, callbackId);
+          }, 15000);
+        } catch (e: any) {
+          console.warn('Native checkBackendHealth failed, falling back to web fetch:', e);
+        }
+      }
+
+      // 2. Browser / WebView fetch fallback:
+      const startTime = performance.now();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      try {
+        const response = await fetch(healthEndpoint, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const latencyMs = Math.round(performance.now() - startTime);
+
+        if (response.ok) {
+          const data = await response.json();
+          return {
+            success: true,
+            status: response.status,
+            latencyMs,
+            dnsOk: true,
+            tlsOk: healthEndpoint.startsWith('https://'),
+            aiServiceAvailable: data?.aiServiceAvailable ?? true,
+            service: data?.service || 'AuraPOS AI Backend',
+            timestamp: new Date().toISOString()
+          };
+        } else {
+          return {
+            success: false,
+            status: response.status,
+            latencyMs,
+            dnsOk: true,
+            tlsOk: healthEndpoint.startsWith('https://'),
+            aiServiceAvailable: false,
+            error: `Server responded with HTTP ${response.status}: ${response.statusText}`,
+            errorType: `HTTP_${response.status}`,
+            timestamp: new Date().toISOString()
+          };
+        }
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        const latencyMs = Math.round(performance.now() - startTime);
+        let errorType = 'BACKEND_UNREACHABLE';
+        let errorMsg = 'Could not establish connection to the AuraPOS AI backend.';
+
+        if (err.name === 'AbortError') {
+          errorType = 'BACKEND_TIMEOUT';
+          errorMsg = 'Health check connection timed out after 12 seconds.';
+        } else if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          errorType = 'NO_INTERNET';
+          errorMsg = 'Device is offline. An active network connection is required.';
+        } else if (err.message && err.message.toLowerCase().includes('failed to fetch')) {
+          errorType = 'BACKEND_UNREACHABLE';
+          errorMsg = 'Could not establish connection to the AuraPOS AI backend. Please verify your backend server URL.';
+        } else if (err.message) {
+          errorMsg = err.message;
+        }
+
+        return {
+          success: false,
+          status: 0,
+          latencyMs,
+          dnsOk: errorType !== 'BACKEND_UNREACHABLE' ? true : undefined,
+          tlsOk: healthEndpoint.startsWith('https://'),
+          aiServiceAvailable: false,
+          error: errorMsg,
+          errorType,
+          timestamp: new Date().toISOString()
         };
       }
     }

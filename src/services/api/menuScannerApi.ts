@@ -4,6 +4,8 @@ import { NativeBridgeService } from '../native/NativeBridgeService.ts';
 import { StorageService } from '../storageService.ts';
 
 export interface AnalyzeMenuRequest {
+  requestId?: string;
+  endpointUrl?: string;
   pages: Array<{
     dataUrl: string;
     mimeType: string;
@@ -52,28 +54,35 @@ export interface AnalyzeMenuResponse {
     }>;
   };
   error?: string;
-  errorType?: string;
+  errorType?: ExtractionErrorType;
   status?: number;
   requestId?: string;
   timingMs?: number;
   modelUsed?: string;
 }
 
+// Requirement 17: Granular, structured network and runtime failure states
 export type ExtractionErrorType =
-  | 'OFFLINE_ERROR'
-  | 'TIMEOUT_ERROR'
-  | 'ABORT_ERROR'
-  | 'NETWORK_ERROR'
-  | 'CORS_ERROR'
+  | 'NO_INTERNET'
+  | 'BACKEND_UNREACHABLE'
+  | 'BACKEND_TIMEOUT'
+  | 'TLS_ERROR'
+  | 'DNS_ERROR'
+  | 'HTTP_401'
+  | 'HTTP_403'
+  | 'HTTP_404'
+  | 'HTTP_429'
+  | 'HTTP_500'
+  | 'HTTP_502'
+  | 'HTTP_503'
+  | 'INVALID_RESPONSE'
+  | 'AI_PROVIDER_ERROR'
+  | 'AI_HIGH_DEMAND'
+  | 'AI_RATE_LIMIT'
   | 'PAYLOAD_TOO_LARGE'
   | 'INVALID_IMAGE'
   | 'EMPTY_IMAGE'
   | 'CONFIG_ERROR'
-  | 'AI_HIGH_DEMAND'
-  | 'AI_RATE_LIMIT'
-  | 'AI_PROVIDER_ERROR'
-  | 'JSON_PARSE_ERROR'
-  | 'HTTP_ERROR'
   | 'UNKNOWN_ERROR';
 
 export class ExtractionDiagnosticError extends Error {
@@ -107,7 +116,6 @@ export class ExtractionDiagnosticError extends Error {
     this.requestId = opts.requestId || `diag_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     this.timestamp = new Date().toISOString();
 
-    // Log structured diagnostic in development environment (Section 3 requirement)
     this.logDiagnostic();
   }
 
@@ -117,6 +125,7 @@ export class ExtractionDiagnosticError extends Error {
         ? true
         : typeof import.meta !== 'undefined' && import.meta.env?.DEV;
 
+    // Structured development diagnostic logger without secrets or credentials (Requirement 3 & 20)
     if (isDev || typeof window !== 'undefined') {
       console.error('[AI_MENU_EXTRACTION_ERROR]', {
         stage: this.stage,
@@ -135,21 +144,62 @@ export class ExtractionDiagnosticError extends Error {
 
 export class MenuScannerApi {
   /**
-   * Resolve best candidate endpoints for the current runtime (Web, PWA, or Android APK)
+   * Returns the primary target backend base URL for display in diagnostics & settings
+   */
+  static getEffectiveBackendUrl(): string {
+    try {
+      const settings = StorageService.getSettings();
+      if (settings?.apiServerUrl && typeof settings.apiServerUrl === 'string' && settings.apiServerUrl.trim()) {
+        return settings.apiServerUrl.trim().replace(/\/+$/, '');
+      }
+    } catch {}
+
+    const envUrl = typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_API_URL : '';
+    if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+      return envUrl.trim().replace(/\/+$/, '');
+    }
+
+    const isBrowser = typeof window !== 'undefined';
+    const isVirtualAndroid =
+      isBrowser &&
+      (window.location.host.includes('androidplatform.net') ||
+        window.location.protocol === 'file:' ||
+        window.location.origin === 'null');
+
+    if (!isVirtualAndroid && isBrowser && window.location.origin && window.location.origin !== 'null') {
+      return window.location.origin;
+    }
+
+    return 'https://api.aurapos.com';
+  }
+
+  /**
+   * Resolve valid, verified candidate endpoints for the current runtime (Web, PWA, or Android APK)
+   * Note: NEVER defaults to ephemeral AI Studio development proxy URLs that require session cookies.
    */
   static getCandidateEndpoints(): string[] {
     const endpoints: string[] = [];
 
-    // 1. Check user-configured custom server URL in Store Settings
+    // 1. User-configured custom server URL from Settings -> System Diagnostics -> AI Backend
     try {
       const settings = StorageService.getSettings();
-      if (settings?.apiServerUrl && typeof settings.apiServerUrl === 'string') {
-        const cleanBase = settings.apiServerUrl.replace(/\/+$/, '');
+      if (settings?.apiServerUrl && typeof settings.apiServerUrl === 'string' && settings.apiServerUrl.trim()) {
+        const cleanBase = settings.apiServerUrl.trim().replace(/\/+$/, '');
         endpoints.push(`${cleanBase}/api/menu/analyze`);
       }
     } catch {}
 
-    // 2. Relative endpoint: Best for Web, PWA, and Dev Server (Same-Origin, No CORS, No Cookie redirects)
+    // 2. Build-time environment variable (e.g. VITE_API_URL)
+    const envUrl = typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_API_URL : '';
+    if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+      const cleanEnv = envUrl.trim().replace(/\/+$/, '');
+      const fullUrl = `${cleanEnv}/api/menu/analyze`;
+      if (!endpoints.includes(fullUrl)) {
+        endpoints.push(fullUrl);
+      }
+    }
+
+    // 3. Same-Origin Relative Endpoint (Best for Web, PWA, and Dev Server — zero CORS, direct proxy)
     const isBrowser = typeof window !== 'undefined';
     const isVirtualAndroid =
       isBrowser &&
@@ -161,16 +211,9 @@ export class MenuScannerApi {
       endpoints.push('/api/menu/analyze');
     }
 
-    // 3. Fallback to production/environment Cloud Run URL if available
-    const envUrl = typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_API_URL : '';
-    if (envUrl && typeof envUrl === 'string' && !endpoints.includes(`${envUrl.replace(/\/+$/, '')}/api/menu/analyze`)) {
-      endpoints.push(`${envUrl.replace(/\/+$/, '')}/api/menu/analyze`);
-    }
-
-    // 4. Default same-origin fallback if running in virtual Android container
-    if (isVirtualAndroid && endpoints.length === 0) {
-      // In Android WebView, if no server URL is provided, target the default hosted cloud backend
-      endpoints.push('https://ais-dev-67yayhjbdr2qcybjx7s4jj-113121063300.us-west2.run.app/api/menu/analyze');
+    // 4. Default production cloud backend if running in standalone Android APK
+    if (endpoints.length === 0) {
+      endpoints.push('https://api.aurapos.com/api/menu/analyze');
     }
 
     return endpoints;
@@ -185,13 +228,13 @@ export class MenuScannerApi {
   ): Promise<AnalyzeMenuResponse> {
     const requestId = `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-    // Check device network connectivity
+    // Requirement 23: Offline check - scanned menu pages remain preserved locally
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       throw new ExtractionDiagnosticError({
         stage: 'OFFLINE_CHECK',
         endpoint: 'client_network',
-        errorType: 'OFFLINE_ERROR',
-        message: 'Your device is currently offline. An active internet connection is required to analyze menus with AI.',
+        errorType: 'NO_INTERNET',
+        message: 'Your device is currently offline. An active internet connection is required to analyze menus with AI. Scanned pages are preserved locally.',
         requestId
       });
     }
@@ -207,10 +250,11 @@ export class MenuScannerApi {
       });
     }
 
-    onProgress?.(`Validating ${pages.length} menu ${pages.length === 1 ? 'page' : 'pages'}...`);
+    // Requirement 18: Progressive status reporting
+    onProgress?.('Connecting to AI...');
 
     // Step 2: Pre-process and optimize images to crisp, lean OCR resolution
-    onProgress?.('Optimizing high-resolution images for crisp OCR recognition...');
+    onProgress?.('Uploading menu...');
 
     const optimizedPages: Array<{ dataUrl: string; mimeType: string; rotation: number }> = [];
 
@@ -244,24 +288,31 @@ export class MenuScannerApi {
       }
     }
 
+    const candidateUrls = this.getCandidateEndpoints();
+    const primaryEndpoint = candidateUrls[0];
+
+    // Payload includes requestId and target endpointUrl for Android native forwarder (Requirement 19 & 22)
     const payload: AnalyzeMenuRequest = {
+      requestId,
+      endpointUrl: primaryEndpoint,
       pages: optimizedPages
     };
 
     const payloadJson = JSON.stringify(payload);
     const payloadSizeBytes = new Blob([payloadJson]).size;
     const payloadMb = (payloadSizeBytes / (1024 * 1024)).toFixed(2);
-    console.log(`[AI_MENU_SCAN] Total request payload: ${payloadMb} MB across ${optimizedPages.length} pages.`);
 
     if (payloadSizeBytes > 28 * 1024 * 1024) {
       throw new ExtractionDiagnosticError({
         stage: 'PAYLOAD_SIZE_CHECK',
         endpoint: 'client_preprocessing',
         errorType: 'PAYLOAD_TOO_LARGE',
-        message: `Total menu images payload (${payloadMb} MB) exceeds maximum safe upload size (28 MB). Please scan 2-3 pages at a time.`,
+        message: `Total menu images payload (${payloadMb} MB) exceeds maximum safe upload size (28 MB). Scanned pages are preserved locally.`,
         requestId
       });
     }
+
+    onProgress?.('Analyzing menu...');
 
     // Step 3: If running inside Android Native Shell with native AI scanner capability
     if (
@@ -270,35 +321,50 @@ export class MenuScannerApi {
       window.AndroidPOSNative?.analyzeMenu
     ) {
       try {
-        onProgress?.('Analyzing via Android hardware acceleration...');
         const nativeRes = await NativeBridgeService.menuScanner.analyzeMenuViaNative(payloadJson);
-        if (nativeRes && (nativeRes.success || nativeRes.data)) {
+        if (nativeRes && nativeRes.success && nativeRes.data) {
+          onProgress?.('Processing results...');
           return nativeRes as AnalyzeMenuResponse;
         }
+
+        // If native bridge returned an error, capture structured diagnostic without swallowing
+        if (nativeRes && !nativeRes.success) {
+          const errType = (nativeRes as any).errorType || 'BACKEND_UNREACHABLE';
+          throw new ExtractionDiagnosticError({
+            stage: 'ANDROID_NATIVE_BRIDGE',
+            endpoint: primaryEndpoint,
+            status: (nativeRes as any).status || 0,
+            statusText: 'NATIVE_BRIDGE_ERROR',
+            errorType: errType as ExtractionErrorType,
+            message: nativeRes.error || 'Native bridge could not establish connection to the AuraPOS AI backend.',
+            requestId
+          });
+        }
       } catch (err: any) {
-        console.warn('Native bridge AI scan failed, falling back to web API:', err);
+        if (err instanceof ExtractionDiagnosticError) {
+          throw err;
+        }
+        console.warn('Native bridge AI scan returned exception, falling back to web fetch:', err);
       }
     }
 
-    // Step 4: Execute Request with structured error handling & timeouts
-    const candidateUrls = this.getCandidateEndpoints();
+    // Step 4: Execute Web/HTTP Request with structured error handling & 120s timeout
     let lastDiagnosticError: ExtractionDiagnosticError | null = null;
-
-    onProgress?.('Connecting to Gemini AI Vision OCR service...');
 
     for (let u = 0; u < candidateUrls.length; u++) {
       const endpointUrl = candidateUrls[u];
       const controller = new AbortController();
-      // 120 second timeout for 5 large menu pages
+      // 120-second timeout for multi-page vision models
       const timeoutId = setTimeout(() => controller.abort(), 120000);
 
       try {
-        console.log(`[AI_MENU_SCAN] Sending request to endpoint: ${endpointUrl} (timeout 120s)`);
+        console.log(`[AI_MENU_SCAN] Sending request to endpoint: ${endpointUrl} (timeout 120s, RequestId: ${requestId})`);
         const response = await fetch(endpointUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Accept: 'application/json'
+            Accept: 'application/json',
+            'X-Request-ID': requestId
           },
           body: payloadJson,
           signal: controller.signal
@@ -306,16 +372,16 @@ export class MenuScannerApi {
 
         clearTimeout(timeoutId);
 
-        // If server responded with an HTTP status:
-        // DO NOT fall through to other endpoints! The server was reached!
+        // If server responded with an HTTP status, do NOT retry other endpoints!
         if (response.ok) {
+          onProgress?.('Processing results...');
           const result: AnalyzeMenuResponse = await response.json();
           if (result && (result.success || result.data)) {
             return result;
           }
           if (result && result.error) {
             throw new ExtractionDiagnosticError({
-              stage: 'AI_EXTRACTION',
+              stage: 'AI_PROVIDER_PROCESSING',
               endpoint: endpointUrl,
               status: response.status,
               statusText: response.statusText,
@@ -325,9 +391,9 @@ export class MenuScannerApi {
             });
           }
         } else {
-          // Server returned an error HTTP status (400, 413, 500, 503, etc.)
-          let serverErrorMsg = `HTTP Error ${response.status}: ${response.statusText}`;
-          let errorType: ExtractionErrorType = 'HTTP_ERROR';
+          // Server returned an error HTTP status (400, 401, 403, 404, 413, 429, 500, 502, 503)
+          let serverErrorMsg = `Server responded with HTTP ${response.status}: ${response.statusText}`;
+          let errorType: ExtractionErrorType = `HTTP_${response.status}` as ExtractionErrorType;
 
           try {
             const errJson = await response.json();
@@ -341,14 +407,22 @@ export class MenuScannerApi {
 
           if (response.status === 413) {
             errorType = 'PAYLOAD_TOO_LARGE';
-            serverErrorMsg = 'Upload payload too large for the server. Please try with fewer pages.';
+            serverErrorMsg = 'Upload payload too large for the server. Scanned pages are preserved locally.';
           } else if (response.status === 503) {
             errorType = 'AI_HIGH_DEMAND';
-            serverErrorMsg =
-              'Google AI is currently experiencing high demand spikes. Please wait a few moments and tap Retry.';
+            serverErrorMsg = 'Google AI is currently experiencing high demand spikes. Please wait a few moments and tap Retry Extraction.';
           } else if (response.status === 429) {
             errorType = 'AI_RATE_LIMIT';
-            serverErrorMsg = 'Google AI rate limit reached. Please wait a few seconds and tap Retry.';
+            serverErrorMsg = 'Google AI rate limit reached. Please wait a few seconds and tap Retry Extraction.';
+          } else if (response.status === 404) {
+            errorType = 'HTTP_404';
+            serverErrorMsg = `The API endpoint '${endpointUrl}' was not found (404). Please verify your backend server URL in Settings → AI Backend.`;
+          } else if (response.status === 401 || response.status === 403) {
+            errorType = response.status === 401 ? 'HTTP_401' : 'HTTP_403';
+            serverErrorMsg = `Access to backend was denied (HTTP ${response.status}). Check authentication credentials or proxy gateway.`;
+          } else if (response.status === 502) {
+            errorType = 'HTTP_502';
+            serverErrorMsg = 'Bad Gateway (502). The upstream server failed to respond.';
           }
 
           throw new ExtractionDiagnosticError({
@@ -364,23 +438,30 @@ export class MenuScannerApi {
       } catch (err: any) {
         clearTimeout(timeoutId);
 
-        // If it is already an ExtractionDiagnosticError from a valid HTTP response, DO NOT retry external endpoints!
+        // If it is already an ExtractionDiagnosticError from a valid HTTP response, DO NOT retry!
         if (err instanceof ExtractionDiagnosticError && err.status > 0) {
           throw err;
         }
 
-        // Determine specific network failure type
-        let errorType: ExtractionErrorType = 'NETWORK_ERROR';
-        let userMessage = 'Could not connect to AI Menu Scanner service.';
+        // Determine specific network failure state (Requirement 17)
+        let errorType: ExtractionErrorType = 'BACKEND_UNREACHABLE';
+        let userMessage = `Could not establish connection to the AuraPOS AI backend (${endpointUrl}).`;
 
         if (err.name === 'AbortError') {
-          errorType = 'TIMEOUT_ERROR';
-          userMessage =
-            'Analysis timed out after 90 seconds. For very large 5-page menus, please verify your internet speed or try scanning 2-3 pages at a time.';
+          errorType = 'BACKEND_TIMEOUT';
+          userMessage = 'AI analysis timed out. The menu pages are preserved locally. Please retry.';
+        } else if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          errorType = 'NO_INTERNET';
+          userMessage = 'Your device is offline. An active internet connection is required. Scanned pages are preserved locally.';
+        } else if (err.message && (err.message.includes('SSL') || err.message.includes('certificate') || err.message.includes('CERT'))) {
+          errorType = 'TLS_ERROR';
+          userMessage = 'TLS/SSL certificate handshake failed. Verify server security configuration.';
+        } else if (err.message && (err.message.includes('ENOTFOUND') || err.message.includes('DNS') || err.message.includes('getaddrinfo'))) {
+          errorType = 'DNS_ERROR';
+          userMessage = 'DNS lookup failed. The hostname could not be resolved.';
         } else if (err.message && err.message.toLowerCase().includes('failed to fetch')) {
-          errorType = 'NETWORK_ERROR';
-          userMessage =
-            'Network request failed. Could not establish connection to the AuraPOS AI backend. Please verify your internet connection or backend server URL.';
+          errorType = 'BACKEND_UNREACHABLE';
+          userMessage = `Could not establish connection to the AuraPOS AI backend at ${endpointUrl}. Please check network connectivity or configure your server in Settings → AI Backend.`;
         } else if (err.message) {
           userMessage = err.message;
         }
@@ -407,7 +488,7 @@ export class MenuScannerApi {
       stage: 'COMPLETION',
       endpoint: 'unknown',
       errorType: 'UNKNOWN_ERROR',
-      message: 'Menu scanning could not be completed. Please try again.',
+      message: 'Menu scanning could not be completed. The menu pages are preserved locally. Please retry.',
       requestId
     });
   }

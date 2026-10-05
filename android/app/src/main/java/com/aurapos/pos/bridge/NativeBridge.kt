@@ -328,20 +328,20 @@ class NativeBridge(
     }
 
     // -------------------------------------------------------------
-    // AI Menu Scanner API Native Forwarder
+    // AI Menu Scanner API Native Forwarder & Health Diagnostics
     // -------------------------------------------------------------
 
     @JavascriptInterface
     fun analyzeMenu(payloadJson: String, callbackId: String) {
         bridgeScope.launch(Dispatchers.IO) {
             try {
-                // Parse optional target endpoint URL if configured by user
                 val parsed = try { JSONObject(payloadJson) } catch (e: Exception) { null }
                 val customEndpoint = parsed?.optString("endpointUrl", null)
+                val requestId = parsed?.optString("requestId", "scan_${System.currentTimeMillis()}")
                 val targetUrl = if (!customEndpoint.isNullOrBlank()) {
                     customEndpoint
                 } else {
-                    "https://ais-dev-67yayhjbdr2qcybjx7s4jj-113121063300.us-west2.run.app/api/menu/analyze"
+                    "https://api.aurapos.com/api/menu/analyze"
                 }
 
                 val url = java.net.URL(targetUrl)
@@ -349,7 +349,8 @@ class NativeBridge(
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("Accept", "application/json")
-                conn.instanceFollowRedirects = true
+                conn.setRequestProperty("X-Request-ID", requestId)
+                conn.instanceFollowRedirects = false // Do not silently follow redirects to authentication/cookie HTML gates
                 conn.doOutput = true
                 conn.connectTimeout = 30000
                 conn.readTimeout = 120000
@@ -360,18 +361,150 @@ class NativeBridge(
                 }
 
                 val responseCode = conn.responseCode
+                if (responseCode == 301 || responseCode == 302) {
+                    val loc = conn.getHeaderField("Location") ?: ""
+                    val errObj = JSONObject().apply {
+                        put("success", false)
+                        put("status", responseCode)
+                        put("error", "The backend endpoint returned redirect ($responseCode) to '$loc'. It appears to be an authenticated proxy or invalid address.")
+                        put("errorType", "BACKEND_UNREACHABLE")
+                        put("requestId", requestId)
+                    }
+                    postCallback(callbackId, errObj.toString())
+                    return@launch
+                }
+
                 val stream = if (responseCode in 200..299) conn.inputStream else conn.errorStream
                 val responseStr = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
 
                 postCallback(callbackId, responseStr)
+            } catch (e: java.net.UnknownHostException) {
+                val errObj = JSONObject().apply {
+                    put("success", false)
+                    put("status", 0)
+                    put("error", "DNS resolution failed. The backend server hostname could not be resolved.")
+                    put("errorType", "DNS_ERROR")
+                }
+                postCallback(callbackId, errObj.toString())
+            } catch (e: javax.net.ssl.SSLException) {
+                val errObj = JSONObject().apply {
+                    put("success", false)
+                    put("status", 0)
+                    put("error", "TLS/SSL security handshake failed: ${e.message}")
+                    put("errorType", "TLS_ERROR")
+                }
+                postCallback(callbackId, errObj.toString())
+            } catch (e: java.net.SocketTimeoutException) {
+                val errObj = JSONObject().apply {
+                    put("success", false)
+                    put("status", 0)
+                    put("error", "Connection to AI backend timed out after 120 seconds. Scanned pages are preserved locally.")
+                    put("errorType", "BACKEND_TIMEOUT")
+                }
+                postCallback(callbackId, errObj.toString())
             } catch (e: Exception) {
                 Log.e("NativeBridge", "analyzeMenu native failed: ${e.message}", e)
                 val errObj = JSONObject().apply {
                     put("success", false)
-                    put("error", e.message ?: "Native OCR bridge request failed")
-                    put("errorType", "NETWORK_ERROR")
+                    put("status", 0)
+                    put("error", "Could not establish connection to the AuraPOS AI backend: ${e.message}")
+                    put("errorType", "BACKEND_UNREACHABLE")
                 }
                 postCallback(callbackId, errObj.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun checkBackendHealth(targetUrl: String, callbackId: String) {
+        bridgeScope.launch(Dispatchers.IO) {
+            val startTime = System.currentTimeMillis()
+            try {
+                val cleanUrl = if (targetUrl.endsWith("/api/health") || targetUrl.endsWith("/health")) {
+                    targetUrl
+                } else {
+                    "${targetUrl.trimEnd('/')}/api/health"
+                }
+
+                val url = java.net.URL(cleanUrl)
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("Accept", "application/json")
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                conn.instanceFollowRedirects = false // Detect redirect barriers
+
+                val code = conn.responseCode
+                val latency = System.currentTimeMillis() - startTime
+
+                if (code in 200..299) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = try { JSONObject(body) } catch(e: Exception) { JSONObject() }
+                    val res = JSONObject().apply {
+                        put("success", true)
+                        put("status", code)
+                        put("latencyMs", latency)
+                        put("dnsOk", true)
+                        put("tlsOk", cleanUrl.startsWith("https"))
+                        put("aiServiceAvailable", json.optBoolean("aiServiceAvailable", true))
+                        put("service", json.optString("service", "AuraPOS AI Backend"))
+                        put("timestamp", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date()))
+                    }
+                    postCallback(callbackId, res.toString())
+                } else if (code == 301 || code == 302) {
+                    val loc = conn.getHeaderField("Location") ?: ""
+                    val res = JSONObject().apply {
+                        put("success", false)
+                        put("status", code)
+                        put("latencyMs", latency)
+                        put("dnsOk", true)
+                        put("tlsOk", cleanUrl.startsWith("https"))
+                        put("error", "Endpoint returned redirect ($code) to '$loc'. An authentication gateway or development proxy is blocking direct access.")
+                        put("errorType", "BACKEND_UNREACHABLE")
+                    }
+                    postCallback(callbackId, res.toString())
+                } else {
+                    val res = JSONObject().apply {
+                        put("success", false)
+                        put("status", code)
+                        put("latencyMs", latency)
+                        put("dnsOk", true)
+                        put("tlsOk", cleanUrl.startsWith("https"))
+                        put("error", "Server responded with HTTP $code")
+                        put("errorType", "HTTP_$code")
+                    }
+                    postCallback(callbackId, res.toString())
+                }
+            } catch (e: java.net.UnknownHostException) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("status", 0)
+                    put("dnsOk", false)
+                    put("error", "DNS resolution failed. Hostname could not be found.")
+                    put("errorType", "DNS_ERROR")
+                }.toString())
+            } catch (e: javax.net.ssl.SSLException) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("status", 0)
+                    put("tlsOk", false)
+                    put("error", "TLS/SSL certificate handshake failed: ${e.message}")
+                    put("errorType", "TLS_ERROR")
+                }.toString())
+            } catch (e: java.net.SocketTimeoutException) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("status", 0)
+                    put("error", "Connection timed out after 10s.")
+                    put("errorType", "BACKEND_TIMEOUT")
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("status", 0)
+                    put("error", e.message ?: "Failed to connect to backend")
+                    put("errorType", "BACKEND_UNREACHABLE")
+                }.toString())
             }
         }
     }

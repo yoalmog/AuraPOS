@@ -28,6 +28,7 @@ import {
 import { PrinterSettings } from './printers/PrinterSettings.tsx';
 import { AccessibilitySettingsTab } from './accessibility/AccessibilitySettingsTab.tsx';
 import { AppearanceSettingsTab } from './appearance/AppearanceSettingsTab.tsx';
+import { AiBackendDiagnosticsTab } from './diagnostics/AiBackendDiagnosticsTab.tsx';
 import { THEME_PRESETS, ThemeColor, applyThemeVariables } from '../../utils/theme.ts';
 import { STORE_LOGO_PRESETS } from '../../utils/productImages.ts';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n/translations.ts';
@@ -51,7 +52,7 @@ export const SettingsView: React.FC = () => {
     t
   } = usePOS();
 
-  const [activeTab, setActiveTab] = useState<'store' | 'appearance' | 'accessibility' | 'printers' | 'receipt' | 'loyalty' | 'data'>('store');
+  const [activeTab, setActiveTab] = useState<'store' | 'appearance' | 'accessibility' | 'printers' | 'receipt' | 'loyalty' | 'data' | 'diagnostics'>('store');
   const [formData, setFormData] = useState<StoreSettings>({
     ...settings,
     themeColor: settings.themeColor || 'blue',
@@ -172,6 +173,7 @@ export const SettingsView: React.FC = () => {
             { id: 'accessibility', label: t('settings.accessibility', 'Accessibility'), icon: Accessibility },
             { id: 'categories', label: 'Categories', icon: FolderTree, isRoute: true },
             { id: 'printers', label: t('settings.printers', 'Printers & Hardware'), icon: Printer },
+            { id: 'diagnostics', label: 'AI Backend Diagnostics', icon: Server },
             { id: 'receipt', label: t('settings.receipt', 'Receipt Customizer'), icon: Receipt },
             { id: 'loyalty', label: t('settings.loyalty', 'Loyalty Program Rules'), icon: Award },
             { id: 'data', label: t('settings.data', 'Data & Offline Sync'), icon: Database }
@@ -209,6 +211,8 @@ export const SettingsView: React.FC = () => {
           <PrinterSettings />
         ) : activeTab === 'accessibility' ? (
           <AccessibilitySettingsTab />
+        ) : activeTab === 'diagnostics' ? (
+          <AiBackendDiagnosticsTab />
         ) : (
           <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
           {activeTab === 'store' && (
