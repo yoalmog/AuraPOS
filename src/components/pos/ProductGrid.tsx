@@ -58,7 +58,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
   };
 
   return (
-    <div className="flex-1 bg-slate-50 p-4 overflow-y-auto">
+    <div className="flex-1 theme-app-bg p-4 overflow-y-auto">
       {filteredProducts.length === 0 ? (
         <div className="h-full flex flex-col items-center justify-center text-center p-8">
           <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-center text-slate-400 mb-3">

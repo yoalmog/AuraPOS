@@ -17,6 +17,7 @@ import { ReportsView } from './components/reports/ReportsView.tsx';
 import { DiscountsView } from './components/discounts/DiscountsView.tsx';
 import { SettingsView } from './components/settings/SettingsView.tsx';
 import { MenuScannerView } from './components/menu-scanner/MenuScannerView.tsx';
+import { AccessibilityLiveAnnouncer } from './components/common/AccessibilityLiveAnnouncer.tsx';
 
 const POSAppContent: React.FC = () => {
   const { activeRoute, isPinLocked, products, addToCart, showToast } = usePOS();
@@ -46,7 +47,7 @@ const POSAppContent: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-sans select-none">
+    <div className="flex h-screen theme-app-bg text-slate-900 overflow-hidden font-sans select-none">
       {/* 1. Global Sidebar Navigation */}
       <Sidebar />
 
@@ -60,7 +61,7 @@ const POSAppContent: React.FC = () => {
         />
 
         {/* View Switcher */}
-        <main className="flex-1 flex overflow-hidden">
+        <main className="flex-1 flex overflow-hidden theme-app-bg">
           {activeRoute === 'pos' && <POSScreen searchTerm={searchTerm} />}
           {activeRoute === 'checkout' && <CheckoutScreen />}
           {activeRoute === 'sales' && <SalesView />}
@@ -84,6 +85,9 @@ const POSAppContent: React.FC = () => {
 
       {/* Store Owner Authorization Verification */}
       <OwnerAuthModal />
+
+      {/* Screen Reader Live Region Announcer */}
+      <AccessibilityLiveAnnouncer />
     </div>
   );
 };

@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import {
+  AccessibilitySettings,
   CartItem,
   Category,
   Customer,
+  DEFAULT_ACCESSIBILITY_SETTINGS,
   Discount,
   Employee,
   HeldOrder,
@@ -16,6 +18,7 @@ import {
 import { StorageService } from '../services/storageService.ts';
 import { PosService } from '../services/posService.ts';
 import { SalesService } from '../services/salesService.ts';
+import { AccessibilityService } from '../services/accessibilityService.ts';
 import { Currency } from '../utils/currency.ts';
 import {
   TRANSLATIONS,
@@ -33,6 +36,8 @@ import {
   COMMON_EXTRA_TRANSLATIONS
 } from '../i18n/index.ts';
 import { ThemeColor, ThemePreset, getTheme, applyThemeVariables } from '../utils/theme.ts';
+import { ThemeService, SemanticColorTokens } from '../services/themeService.ts';
+import { AppearanceSettings } from '../types/pos.ts';
 
 export type AppRoute =
   | 'pos'
@@ -83,6 +88,10 @@ interface POSContextType {
   themeColor: ThemeColor;
   setThemeColor: (theme: ThemeColor) => void;
   currentTheme: ThemePreset;
+  appearance: AppearanceSettings;
+  updateAppearance: (partial: Partial<AppearanceSettings>) => void;
+  resetAppearance: () => void;
+  activeThemeTokens: SemanticColorTokens;
 
   // Security / Employee
   currentEmployee: Employee;
@@ -159,6 +168,14 @@ interface POSContextType {
   setOpenHeldOrdersModal: (open: boolean) => void;
   completedSale: Sale | null;
   setCompletedSale: (sale: Sale | null) => void;
+
+  // Accessibility System (Sections 1-26)
+  accessibility: AccessibilitySettings;
+  updateAccessibility: (settings: Partial<AccessibilitySettings>) => void;
+  resetAccessibility: () => void;
+  announceAccessibility: (text: string, priority?: 'polite' | 'assertive') => void;
+  triggerHaptic: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => void;
+  playAudioCue: (type?: 'click' | 'add' | 'remove' | 'pay' | 'success' | 'error' | 'beep') => void;
 }
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
@@ -188,6 +205,43 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [settings, setSettings] = useState<StoreSettings>(() => StorageService.getSettings());
   const [categories, setCategories] = useState<Category[]>(() => StorageService.getCategories());
 
+  // Accessibility System State (Section 1-26)
+  const [accessibility, setAccessibilityState] = useState<AccessibilitySettings>(() =>
+    AccessibilityService.getSettings()
+  );
+
+  useEffect(() => {
+    AccessibilityService.applyToDOM(accessibility);
+  }, [accessibility]);
+
+  const updateAccessibility = useCallback((partial: Partial<AccessibilitySettings>) => {
+    const updated = AccessibilityService.saveSettings(partial);
+    setAccessibilityState(updated);
+  }, []);
+
+  const resetAccessibility = useCallback(() => {
+    const reset = AccessibilityService.resetToDefault();
+    setAccessibilityState(reset);
+  }, []);
+
+  const announceAccessibility = useCallback((text: string, priority: 'polite' | 'assertive' = 'polite') => {
+    AccessibilityService.announce(text, priority);
+  }, []);
+
+  const triggerHaptic = useCallback(
+    (type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' = 'light') => {
+      AccessibilityService.triggerHaptic(type);
+    },
+    []
+  );
+
+  const playAudioCue = useCallback(
+    (type: 'click' | 'add' | 'remove' | 'pay' | 'success' | 'error' | 'beep' = 'click') => {
+      AccessibilityService.playAudioCue(type);
+    },
+    []
+  );
+
   // Localization & Theme
   const [language, setLanguageState] = useState<SupportedLanguage>(() => {
     const saved = typeof window !== 'undefined' ? (localStorage.getItem('aurapos_lang') as SupportedLanguage) : null;
@@ -197,6 +251,13 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [themeColor, setThemeColorState] = useState<ThemeColor>(() => {
     return (StorageService.getSettings().themeColor as ThemeColor) || 'blue';
   });
+
+  const [appearance, setAppearance] = useState<AppearanceSettings>(() => {
+    const s = StorageService.getSettings();
+    return ThemeService.extractAppearance(s);
+  });
+
+  const activeThemeTokens = useMemo(() => ThemeService.getTokens(appearance), [appearance]);
 
   const currentTheme = useMemo(() => getTheme(themeColor), [themeColor]);
 
@@ -286,23 +347,52 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  const setThemeColor = useCallback((theme: ThemeColor) => {
-    setThemeColorState(theme);
-    const curr = StorageService.getSettings();
-    const updated = { ...curr, themeColor: theme };
-    StorageService.saveSettings(updated);
-    setSettings(updated);
-    applyThemeVariables(theme);
+  const updateAppearance = useCallback((partial: Partial<AppearanceSettings>) => {
+    setAppearance(prev => {
+      const next: AppearanceSettings = { ...prev, ...partial };
+      const s = StorageService.getSettings();
+      const mappedColor = (next.palette === 'custom' ? 'blue' : next.palette) as ThemeColor;
+      const updatedSettings: StoreSettings = {
+        ...s,
+        themeMode: next.mode,
+        themePalette: next.palette,
+        themeColor: mappedColor,
+        themeBackgroundStyle: next.backgroundStyle,
+        themePattern: next.pattern,
+        themeAccentColor: next.accentColor,
+        themeCustomColors: next.customColors
+      };
+      StorageService.saveSettings(updatedSettings);
+      setSettings(updatedSettings);
+      setThemeColorState(mappedColor);
+      ThemeService.applyToDOM(next, updatedSettings);
+      return next;
+    });
   }, []);
 
+  const resetAppearance = useCallback(() => {
+    const defaultAppearance: AppearanceSettings = {
+      mode: 'light',
+      palette: 'blue',
+      backgroundStyle: 'soft-tint',
+      pattern: 'none'
+    };
+    updateAppearance(defaultAppearance);
+  }, [updateAppearance]);
+
+  const setThemeColor = useCallback((theme: ThemeColor) => {
+    setThemeColorState(theme);
+    updateAppearance({ palette: theme as any });
+  }, [updateAppearance]);
+
   useEffect(() => {
-    applyThemeVariables(themeColor);
+    ThemeService.applyToDOM(appearance, settings);
     const langOpt = SUPPORTED_LANGUAGES.find(l => l.code === language);
     if (typeof document !== 'undefined') {
       document.documentElement.setAttribute('lang', language);
       document.documentElement.setAttribute('dir', langOpt?.dir || 'ltr');
     }
-  }, [themeColor, language]);
+  }, [appearance, language, settings]);
   const [products, setProducts] = useState<Product[]>(() => StorageService.getProducts());
   const [customers, setCustomers] = useState<Customer[]>(() => StorageService.getCustomers());
   const [sales, setSales] = useState<Sale[]>(() => StorageService.getSales());
@@ -478,6 +568,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addToCart = useCallback((product: Product, variant?: ProductVariant, quantity = 1, notes?: string) => {
     if (!product.active || (variant && !variant.active)) {
       showToast({ type: 'warning', title: 'Product inactive', message: `${product.name} is disabled.` });
+      triggerHaptic('warning');
       return;
     }
 
@@ -488,6 +579,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         title: 'Out of Stock',
         message: `${variant ? `${product.name} (${variant.name})` : product.name} has 0 units remaining.`
       });
+      triggerHaptic('error');
+      playAudioCue('error');
       return;
     }
 
@@ -495,6 +588,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cost = variant ? variant.cost : product.cost;
     const variantId = variant?.id;
     const variantName = variant?.name;
+
+    // Accessibility feedback
+    playAudioCue('add');
+    triggerHaptic('light');
+    const itemName = variant ? `${product.name} ${variant.name}` : product.name;
+    announceAccessibility(`${itemName} added to cart. Price: ${settings.currency || '$'}${price.toFixed(2)}.`);
 
     setCartItems(prev => {
       const existingIdx = prev.findIndex(item => item.productId === product.id && item.variantId === variantId && (item.notes || '') === (notes || ''));
@@ -508,6 +607,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             title: 'Stock limit reached',
             message: `Only ${availableStock} units available for ${variant ? variant.name : product.name}.`
           });
+          triggerHaptic('warning');
           return prev;
         }
 
@@ -540,11 +640,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return [newItem, ...prev];
     });
-  }, [settings.allowNegativeStock, showToast, taxConfigs]);
+  }, [settings.allowNegativeStock, settings.currency, showToast, taxConfigs, triggerHaptic, playAudioCue, announceAccessibility]);
 
   const updateCartItemQty = useCallback((itemId: string, newQty: number) => {
     if (newQty <= 0) {
-      setCartItems(prev => prev.filter(item => item.id !== itemId));
+      removeCartItem(itemId);
       return;
     }
 
@@ -556,8 +656,16 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (prod && prod.trackInventory && newQty > prod.stock && !settings.allowNegativeStock) {
         showToast({ type: 'warning', title: 'Stock limit', message: `Only ${prod.stock} in stock.` });
+        triggerHaptic('warning');
         return prev;
       }
+
+      if (newQty > item.quantity) {
+        playAudioCue('add');
+      } else {
+        playAudioCue('remove');
+      }
+      triggerHaptic('light');
 
       const updated = [...prev];
       updated[idx] = {
@@ -567,18 +675,29 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
       return updated;
     });
-  }, [products, settings.allowNegativeStock, showToast]);
+  }, [products, settings.allowNegativeStock, showToast, triggerHaptic, playAudioCue]);
 
   const removeCartItem = useCallback((itemId: string) => {
-    setCartItems(prev => prev.filter(item => item.id !== itemId));
-  }, []);
+    playAudioCue('remove');
+    triggerHaptic('medium');
+    setCartItems(prev => {
+      const item = prev.find(i => i.id === itemId);
+      if (item) {
+        announceAccessibility(`${item.productName} removed from cart.`);
+      }
+      return prev.filter(i => i.id !== itemId);
+    });
+  }, [playAudioCue, triggerHaptic, announceAccessibility]);
 
   const clearCart = useCallback(() => {
+    playAudioCue('remove');
+    triggerHaptic('medium');
+    announceAccessibility('Cart cleared.');
     setCartItems([]);
     setActiveCustomer(null);
     setActiveDiscount(null);
     setCartNotes('');
-  }, []);
+  }, [playAudioCue, triggerHaptic, announceAccessibility]);
 
   const taxRate = useMemo(() => {
     const active = taxConfigs.find(t => t.active);
@@ -737,6 +856,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         themeColor,
         setThemeColor,
         currentTheme,
+        appearance,
+        updateAppearance,
+        resetAppearance,
+        activeThemeTokens,
         settings,
         updateSettings,
         categories,
@@ -782,7 +905,13 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openHeldOrdersModal,
         setOpenHeldOrdersModal,
         completedSale,
-        setCompletedSale
+        setCompletedSale,
+        accessibility,
+        updateAccessibility,
+        resetAccessibility,
+        announceAccessibility,
+        triggerHaptic,
+        playAudioCue
       }}
     >
       {children}

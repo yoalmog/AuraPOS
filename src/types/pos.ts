@@ -333,11 +333,49 @@ export interface HeldOrder {
   createdAt: string;
 }
 
+export type ThemePaletteId =
+  | 'blue'
+  | 'emerald'
+  | 'purple'
+  | 'orange'
+  | 'red'
+  | 'teal'
+  | 'slate'
+  | 'rose'
+  | 'indigo'
+  | 'custom';
+
+export type ThemeMode = 'light' | 'dark' | 'system';
+export type BackgroundStyle = 'solid' | 'soft-tint' | 'gradient' | 'pattern' | 'minimal';
+export type PatternStyle = 'dots' | 'grid' | 'mesh' | 'none';
+
+export interface CustomThemeColors {
+  primary: string;
+  secondary?: string;
+  accent?: string;
+  bgTint?: string;
+}
+
+export interface AppearanceSettings {
+  mode: ThemeMode;
+  palette: ThemePaletteId;
+  backgroundStyle: BackgroundStyle;
+  pattern: PatternStyle;
+  accentColor?: string;
+  customColors?: CustomThemeColors;
+}
+
 export interface StoreSettings {
   id: string;
   name: string;
   logoUrl?: string;
   themeColor?: 'blue' | 'emerald' | 'violet' | 'amber' | 'rose' | 'slate' | 'teal';
+  themeMode?: ThemeMode;
+  themePalette?: ThemePaletteId;
+  themeBackgroundStyle?: BackgroundStyle;
+  themePattern?: PatternStyle;
+  themeAccentColor?: string;
+  themeCustomColors?: CustomThemeColors;
   language?: string;
   address: string;
   city: string;
@@ -374,3 +412,49 @@ export interface OfflineSaleQueueItem {
   retryCount: number;
   timestamp: number;
 }
+
+// -------------------------------------------------------------
+// Accessibility System Types (AuraPOS Section 1-26)
+// -------------------------------------------------------------
+
+export type TextScale = 'normal' | 'large' | 'xlarge' | 'maximum'; // 1.0x, 1.15x, 1.30x, 1.50x
+export type ContrastMode = 'normal' | 'high' | 'extra-high';
+export type ColorBlindMode = 'none' | 'protanopia' | 'deuteranopia' | 'tritanopia' | 'monochrome';
+export type TouchTargetSize = 'normal' | 'large' | 'xlarge'; // 44px, 52px, 60px minimum
+
+export interface AccessibilitySettings {
+  textScale: TextScale;
+  contrastMode: ContrastMode;
+  boldText: boolean;
+  reduceMotion: boolean;
+  disableAnimations: boolean;
+  touchTargetSize: TouchTargetSize;
+  extraSpacing: boolean;
+  simplifiedPos: boolean;
+  screenReaderOptimization: boolean;
+  colorBlindMode: ColorBlindMode;
+  focusIndicators: boolean;
+  reduceTransparency: boolean;
+  hapticFeedback: boolean;
+  audioFeedback: boolean;
+  spokenFeedback: boolean;
+}
+
+export const DEFAULT_ACCESSIBILITY_SETTINGS: AccessibilitySettings = {
+  textScale: 'normal',
+  contrastMode: 'normal',
+  boldText: false,
+  reduceMotion: false,
+  disableAnimations: false,
+  touchTargetSize: 'normal',
+  extraSpacing: false,
+  simplifiedPos: false,
+  screenReaderOptimization: false,
+  colorBlindMode: 'none',
+  focusIndicators: true,
+  reduceTransparency: false,
+  hapticFeedback: true,
+  audioFeedback: false,
+  spokenFeedback: false
+};
+

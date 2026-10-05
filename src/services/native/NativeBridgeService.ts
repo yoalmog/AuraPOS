@@ -68,6 +68,8 @@ declare global {
 
       getDiagnostics: () => string;
       analyzeMenu?: (payloadJson: string, callbackId: string) => void;
+      vibrate?: (durationMs: number) => void;
+      announceForAccessibility?: (text: string) => void;
     };
     __AuraPOSNativeCallbacks?: Record<string, (result: any) => void>;
     __AuraPOSEventBus?: {
@@ -546,6 +548,39 @@ export class NativeBridgeService {
       return NativeBridgeService.callNativeAsync(callbackId => {
         window.AndroidPOSNative!.analyzeMenu!(payloadJson, callbackId);
       });
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Native Accessibility & Haptics (Section 11 & 20)
+  // --------------------------------------------------------------------------
+  static accessibility = {
+    vibrate: (durationMs: number = 50) => {
+      if (NativeBridgeService.isNativeAndroid() && window.AndroidPOSNative?.vibrate) {
+        try {
+          window.AndroidPOSNative.vibrate(durationMs);
+          return;
+        } catch (e) {
+          console.warn('Native vibrate call failed:', e);
+        }
+      }
+      // Web Fallback
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        try {
+          navigator.vibrate(durationMs);
+        } catch {}
+      }
+    },
+
+    announce: (text: string) => {
+      if (NativeBridgeService.isNativeAndroid() && window.AndroidPOSNative?.announceForAccessibility) {
+        try {
+          window.AndroidPOSNative.announceForAccessibility(text);
+          return;
+        } catch (e) {
+          console.warn('Native accessibility announcement failed:', e);
+        }
+      }
     }
   };
 }

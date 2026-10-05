@@ -95,6 +95,347 @@
   --color-blue-900: #134e4a;
 }
 
+/* -------------------------------------------------------------
+   AuraPOS Production Theme & Appearance Engine (Requirement 1-28)
+   ------------------------------------------------------------- */
+
+:root {
+  --theme-primary: #2563eb;
+  --theme-primary-variant: #1d4ed8;
+  --theme-secondary: #3b82f6;
+  --theme-accent: #60a5fa;
+  --theme-bg: #f4f7fc;
+  --theme-bg-secondary: #eaf0fa;
+  --theme-surface: #ffffff;
+  --theme-surface-variant: #f0f5ff;
+  --theme-card: #ffffff;
+  --theme-card-border: #dbeafe;
+  --theme-text-primary: #0f172a;
+  --theme-text-secondary: #475569;
+  --theme-text-disabled: #94a3b8;
+  --theme-border: #cbd5e1;
+  --theme-divider: #e2e8f0;
+  --theme-icon: #2563eb;
+  --theme-button: #2563eb;
+  --theme-button-text: #ffffff;
+  --theme-button-hover: #1d4ed8;
+  --theme-selected: #eff6ff;
+  --theme-hover: #f1f5f9;
+  --theme-focus: #2563eb;
+  --theme-status-success: #10b981;
+  --theme-status-warning: #f59e0b;
+  --theme-status-error: #ef4444;
+  --theme-status-info: #3b82f6;
+
+  --a11y-text-scale: 1.0;
+  --a11y-min-touch: 44px;
+  --a11y-focus-ring-width: 3px;
+  --a11y-focus-ring-color: #2563eb;
+}
+
+body {
+  background-color: var(--theme-bg, #f4f7fc);
+  color: var(--theme-text-primary, #0f172a);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+[data-reduce-motion="true"] body,
+[data-disable-animations="true"] body {
+  transition: none !important;
+}
+
+/* Background Style Variants (Requirement 4) */
+.theme-app-bg,
+.bg-slate-50 {
+  background-color: var(--theme-bg, #f4f7fc);
+  color: var(--theme-text-primary, #0f172a);
+}
+
+[data-bg-style="solid"] .theme-app-bg,
+[data-bg-style="solid"] .bg-slate-50 {
+  background-color: var(--theme-bg) !important;
+}
+
+[data-bg-style="soft-tint"] .theme-app-bg,
+[data-bg-style="soft-tint"] .bg-slate-50 {
+  background-color: var(--theme-bg) !important;
+}
+
+[data-bg-style="gradient"] .theme-app-bg,
+[data-bg-style="gradient"] .bg-slate-50 {
+  background: linear-gradient(135deg, var(--theme-bg) 0%, var(--theme-bg-secondary) 100%) !important;
+}
+
+[data-bg-style="minimal"] .theme-app-bg,
+[data-bg-style="minimal"] .bg-slate-50 {
+  background-color: #f8fafc !important;
+}
+
+[data-mode="dark"][data-bg-style="minimal"] .theme-app-bg,
+[data-mode="dark"][data-bg-style="minimal"] .bg-slate-50 {
+  background-color: #0b0f19 !important;
+}
+
+/* Background Patterns (Requirement 4 - Subtle, zero interference with text or buttons) */
+[data-bg-pattern="dots"] .theme-app-bg,
+[data-bg-pattern="dots"] .bg-slate-50 {
+  background-image: radial-gradient(rgba(100, 116, 139, 0.12) 1px, transparent 1px) !important;
+  background-size: 18px 18px !important;
+}
+
+[data-mode="dark"][data-bg-pattern="dots"] .theme-app-bg,
+[data-mode="dark"][data-bg-pattern="dots"] .bg-slate-50 {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px) !important;
+  background-size: 18px 18px !important;
+}
+
+[data-bg-pattern="grid"] .theme-app-bg,
+[data-bg-pattern="grid"] .bg-slate-50 {
+  background-image: linear-gradient(to right, rgba(100, 116, 139, 0.07) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(100, 116, 139, 0.07) 1px, transparent 1px) !important;
+  background-size: 24px 24px !important;
+}
+
+[data-mode="dark"][data-bg-pattern="grid"] .theme-app-bg,
+[data-mode="dark"][data-bg-pattern="grid"] .bg-slate-50 {
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px) !important;
+  background-size: 24px 24px !important;
+}
+
+[data-bg-pattern="mesh"] .theme-app-bg,
+[data-bg-pattern="mesh"] .bg-slate-50 {
+  background-image: radial-gradient(at 0% 0%, var(--theme-surface-variant) 0px, transparent 50%),
+                    radial-gradient(at 100% 100%, var(--theme-bg-secondary) 0px, transparent 50%) !important;
+}
+
+/* Semantic Theme Helpers */
+.theme-app-bg {
+  background-color: var(--theme-bg);
+}
+
+.theme-surface {
+  background-color: var(--theme-surface);
+  border-color: var(--theme-border);
+}
+
+.theme-card {
+  background-color: var(--theme-card);
+  border-color: var(--theme-card-border);
+  color: var(--theme-text-primary);
+}
+
+.theme-text {
+  color: var(--theme-text-primary);
+}
+
+.theme-text-secondary {
+  color: var(--theme-text-secondary);
+}
+
+.theme-border {
+  border-color: var(--theme-border);
+}
+
+/* Dark Mode Overrides (Requirement 9) */
+[data-mode="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+[data-mode="dark"] select,
+[data-mode="dark"] textarea {
+  background-color: var(--theme-surface) !important;
+  color: var(--theme-text-primary) !important;
+  border-color: var(--theme-border) !important;
+}
+
+[data-mode="dark"] .bg-white {
+  background-color: var(--theme-surface) !important;
+  color: var(--theme-text-primary);
+}
+
+[data-mode="dark"] .bg-slate-50 {
+  background-color: var(--theme-bg) !important;
+  color: var(--theme-text-primary);
+}
+
+[data-mode="dark"] .border-slate-200,
+[data-mode="dark"] .border-slate-100 {
+  border-color: var(--theme-border) !important;
+}
+
+[data-mode="dark"] .text-slate-900,
+[data-mode="dark"] .text-slate-800 {
+  color: var(--theme-text-primary) !important;
+}
+
+[data-mode="dark"] .text-slate-700,
+[data-mode="dark"] .text-slate-600,
+[data-mode="dark"] .text-slate-500 {
+  color: var(--theme-text-secondary) !important;
+}
+
+/* QR Code & Camera Scan Safety (Requirement 20 - Pure high contrast, zero tint interference) */
+.qr-container, .qr-image, img[alt*="QR"], img[alt*="qr"] {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  filter: none !important;
+}
+
+/* -------------------------------------------------------------
+   AuraPOS Accessibility Subsystem Tokens & Rules (Sections 1-26)
+   ------------------------------------------------------------- */
+
+/* 1. Dynamic Text Scaling */
+[data-text-scale="large"] {
+  font-size: 108%;
+}
+
+[data-text-scale="xlarge"] {
+  font-size: 118%;
+}
+
+[data-text-scale="maximum"] {
+  font-size: 130%;
+}
+
+/* 2. Bold Text Mode */
+[data-bold-text="true"] body,
+[data-bold-text="true"] button,
+[data-bold-text="true"] input,
+[data-bold-text="true"] select,
+[data-bold-text="true"] span,
+[data-bold-text="true"] p,
+[data-bold-text="true"] h1,
+[data-bold-text="true"] h2,
+[data-bold-text="true"] h3,
+[data-bold-text="true"] h4 {
+  font-weight: 600 !important;
+}
+
+/* 3. High Contrast & Extra High Contrast */
+[data-contrast="high"] {
+  --color-slate-100: #e2e8f0;
+  --color-slate-200: #cbd5e1;
+  --color-slate-300: #94a3b8;
+  --color-slate-400: #475569;
+  --color-slate-500: #334155;
+  --color-slate-600: #1e293b;
+  --color-slate-700: #0f172a;
+  --color-slate-800: #020617;
+  --color-slate-900: #000000;
+}
+
+[data-contrast="high"] button,
+[data-contrast="high"] input,
+[data-contrast="high"] select,
+[data-contrast="high"] .card-contrast {
+  border-width: 2px !important;
+  border-color: #334155 !important;
+}
+
+[data-contrast="extra-high"] {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+[data-contrast="extra-high"] body {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+[data-contrast="extra-high"] button {
+  border: 2px solid #ffffff !important;
+  font-weight: 700 !important;
+}
+
+[data-contrast="extra-high"] input,
+[data-contrast="extra-high"] select,
+[data-contrast="extra-high"] textarea {
+  border: 2px solid #f59e0b !important;
+  background-color: #18181b !important;
+  color: #ffffff !important;
+}
+
+/* 4. Touch Target Scaling (Section 3: Min 48dp - 60dp) */
+[data-touch-targets="large"] button,
+[data-touch-targets="large"] a,
+[data-touch-targets="large"] input[type="button"],
+[data-touch-targets="large"] input[type="submit"],
+[data-touch-targets="large"] select,
+[data-touch-targets="large"] .touch-target {
+  min-height: 52px !important;
+  min-width: 52px !important;
+  padding-top: 0.65rem !important;
+  padding-bottom: 0.65rem !important;
+}
+
+[data-touch-targets="xlarge"] button,
+[data-touch-targets="xlarge"] a,
+[data-touch-targets="xlarge"] input[type="button"],
+[data-touch-targets="xlarge"] input[type="submit"],
+[data-touch-targets="xlarge"] select,
+[data-touch-targets="xlarge"] .touch-target {
+  min-height: 60px !important;
+  min-width: 60px !important;
+  padding-top: 0.85rem !important;
+  padding-bottom: 0.85rem !important;
+  font-size: 1.05rem !important;
+}
+
+/* 5. Extra Spacing */
+[data-extra-spacing="true"] .gap-1 { gap: 0.5rem !important; }
+[data-extra-spacing="true"] .gap-2 { gap: 0.85rem !important; }
+[data-extra-spacing="true"] .gap-3 { gap: 1.15rem !important; }
+[data-extra-spacing="true"] .gap-4 { gap: 1.5rem !important; }
+[data-extra-spacing="true"] .p-2 { padding: 0.75rem !important; }
+[data-extra-spacing="true"] .p-3 { padding: 1.1rem !important; }
+[data-extra-spacing="true"] .p-4 { padding: 1.5rem !important; }
+
+/* 6. High Visibility Focus Indicators (Section 9 & 10) */
+[data-focus-indicators="true"] :focus-visible {
+  outline: var(--a11y-focus-ring-width, 3px) solid var(--a11y-focus-ring-color, #2563eb) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.25) !important;
+}
+
+/* 7. Reduced Motion & Disabled Animations (Section 12) */
+[data-reduce-motion="true"] *,
+[data-disable-animations="true"] * {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* 8. Reduced Transparency (Section 1) */
+[data-reduce-transparency="true"] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-reduce-transparency="true"] .bg-white\/90,
+[data-reduce-transparency="true"] .bg-white\/80,
+[data-reduce-transparency="true"] .bg-slate-900\/80 {
+  background-color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+/* 9. Color Blind Mode Overrides */
+[data-colorblind="monochrome"] {
+  filter: grayscale(100%);
+}
+
+/* Screen reader only utility class */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
 /* Custom slim modern scrollbars for POS touch screens */
 ::-webkit-scrollbar {
   width: 6px;

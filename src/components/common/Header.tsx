@@ -89,7 +89,7 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
 
   return (
     <>
-      <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-3 sticky top-0 z-10 shrink-0">
+      <header className="h-16 theme-surface border-b border-[var(--theme-border)] px-4 sm:px-6 flex items-center justify-between gap-3 sticky top-0 z-10 shrink-0">
         {/* Left: Mobile Menu / Collapse Toggle & Route Title */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Mobile Hamburger Drawer Toggle */}

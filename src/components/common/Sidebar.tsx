@@ -100,7 +100,10 @@ export const Sidebar: React.FC = () => {
         >
           {/* Logo & Store Name */}
           <div className={`flex items-center gap-3 min-w-0 ${isSidebarCollapsed ? 'lg:hidden' : 'flex'}`}>
-            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold shadow-md shrink-0 overflow-hidden">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold shadow-md shrink-0 overflow-hidden"
+              style={{ backgroundColor: 'var(--theme-primary)' }}
+            >
               {settings.logoUrl ? (
                 <img
                   src={settings.logoUrl}
@@ -122,7 +125,10 @@ export const Sidebar: React.FC = () => {
 
           {/* Collapsed state logo on desktop */}
           {isSidebarCollapsed && (
-            <div className="hidden lg:flex w-9 h-9 rounded-xl bg-blue-600 items-center justify-center text-white font-bold shadow-md shrink-0 overflow-hidden">
+            <div
+              className="hidden lg:flex w-9 h-9 rounded-xl items-center justify-center text-white font-bold shadow-md shrink-0 overflow-hidden"
+              style={{ backgroundColor: 'var(--theme-primary)' }}
+            >
               {settings.logoUrl ? (
                 <img
                   src={settings.logoUrl}
@@ -183,9 +189,10 @@ export const Sidebar: React.FC = () => {
                     : 'gap-3 px-3.5 py-2.5'
                 } ${
                   isActive
-                    ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                    ? 'text-white font-semibold shadow-sm'
                     : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/70'
                 }`}
+                style={isActive ? { backgroundColor: 'var(--theme-primary)' } : undefined}
               >
                 <Icon
                   className={`w-4 h-4 shrink-0 transition-transform ${

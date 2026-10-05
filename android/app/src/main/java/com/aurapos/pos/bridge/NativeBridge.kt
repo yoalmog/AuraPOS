@@ -365,6 +365,47 @@ class NativeBridge(
     }
 
     // -------------------------------------------------------------
+    // Accessibility & Haptics APIs (Section 11 & 20)
+    // -------------------------------------------------------------
+
+    @JavascriptInterface
+    fun vibrate(durationMs: Long) {
+        activity.runOnUiThread {
+            try {
+                val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val manager = activity.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                    manager?.defaultVibrator
+                } else {
+                    @Suppress("DEPRECATION")
+                    activity.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                }
+
+                if (vibrator?.hasVibrator() == true) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        vibrator.vibrate(android.os.VibrationEffect.createOneShot(durationMs.coerceIn(10, 1000), android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                    } else {
+                        @Suppress("DEPRECATION")
+                        vibrator.vibrate(durationMs.coerceIn(10, 1000))
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("NativeBridge", "Haptic vibration failed: ${e.message}")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun announceForAccessibility(text: String) {
+        activity.runOnUiThread {
+            try {
+                webView.announceForAccessibility(text)
+            } catch (e: Exception) {
+                Log.w("NativeBridge", "Accessibility announcement failed: ${e.message}")
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
     // Safe Helper Dispatchers to JavaScript
     // -------------------------------------------------------------
 

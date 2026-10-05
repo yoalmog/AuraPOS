@@ -50,14 +50,14 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
 
   return (
     <div
-      className={`border-l border-slate-200 bg-white flex flex-col select-none shadow-sm shrink-0 ${
+      className={`border-l border-[var(--theme-border)] theme-surface flex flex-col select-none shadow-sm shrink-0 ${
         isOpenOnMobile
           ? 'fixed inset-0 z-50 overflow-hidden'
           : 'hidden lg:flex w-80 xl:w-96 h-[calc(100vh-4rem)] sticky top-16 z-10'
       }`}
     >
       {/* Ticket Header & Customer Tag */}
-      <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col gap-2">
+      <div className="p-4 border-b border-[var(--theme-border)] bg-[var(--theme-surface-variant)] flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             {onCloseMobile && (
@@ -326,7 +326,11 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
             setActiveRoute('checkout');
             if (onCloseMobile) onCloseMobile();
           }}
-          className="w-full flex items-center justify-center gap-2.5 py-3.5 px-4 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white text-sm font-bold rounded-xl shadow-md disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all"
+          className="w-full flex items-center justify-center gap-2.5 py-3.5 px-4 active:scale-[0.99] text-sm font-bold rounded-xl shadow-md disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all"
+          style={{
+            backgroundColor: cartItems.length > 0 ? 'var(--theme-button)' : undefined,
+            color: cartItems.length > 0 ? 'var(--theme-button-text)' : undefined
+          }}
         >
           <CreditCard className="w-5 h-5" />
           <span>{t('pos.charge', 'CHARGE')} ${grandTotal.toFixed(2)} (F7)</span>

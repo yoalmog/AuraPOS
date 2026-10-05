@@ -22,9 +22,12 @@ import {
   ShieldCheck,
   Lock,
   UserCheck,
-  FolderTree
+  FolderTree,
+  Accessibility
 } from 'lucide-react';
 import { PrinterSettings } from './printers/PrinterSettings.tsx';
+import { AccessibilitySettingsTab } from './accessibility/AccessibilitySettingsTab.tsx';
+import { AppearanceSettingsTab } from './appearance/AppearanceSettingsTab.tsx';
 import { THEME_PRESETS, ThemeColor, applyThemeVariables } from '../../utils/theme.ts';
 import { STORE_LOGO_PRESETS } from '../../utils/productImages.ts';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n/translations.ts';
@@ -48,7 +51,7 @@ export const SettingsView: React.FC = () => {
     t
   } = usePOS();
 
-  const [activeTab, setActiveTab] = useState<'store' | 'printers' | 'receipt' | 'loyalty' | 'data'>('store');
+  const [activeTab, setActiveTab] = useState<'store' | 'appearance' | 'accessibility' | 'printers' | 'receipt' | 'loyalty' | 'data'>('store');
   const [formData, setFormData] = useState<StoreSettings>({
     ...settings,
     themeColor: settings.themeColor || 'blue',
@@ -102,7 +105,7 @@ export const SettingsView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-slate-50 p-6 overflow-y-auto">
+    <div className="flex-1 theme-app-bg p-6 overflow-y-auto">
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -165,6 +168,8 @@ export const SettingsView: React.FC = () => {
         <div className="flex border-b border-slate-200 gap-6 text-xs font-semibold overflow-x-auto scrollbar-none">
           {[
             { id: 'store', label: t('settings.storeProfile', 'Store Information'), icon: Store },
+            { id: 'appearance', label: t('settings.appearance', 'Appearance & Theme'), icon: Palette },
+            { id: 'accessibility', label: t('settings.accessibility', 'Accessibility'), icon: Accessibility },
             { id: 'categories', label: 'Categories', icon: FolderTree, isRoute: true },
             { id: 'printers', label: t('settings.printers', 'Printers & Hardware'), icon: Printer },
             { id: 'receipt', label: t('settings.receipt', 'Receipt Customizer'), icon: Receipt },
@@ -197,9 +202,13 @@ export const SettingsView: React.FC = () => {
           })}
         </div>
 
-        {/* Content Form or Printers Management */}
-        {activeTab === 'printers' ? (
+        {/* Content Form or Printers / Accessibility / Appearance Management */}
+        {activeTab === 'appearance' ? (
+          <AppearanceSettingsTab />
+        ) : activeTab === 'printers' ? (
           <PrinterSettings />
+        ) : activeTab === 'accessibility' ? (
+          <AccessibilitySettingsTab />
         ) : (
           <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
           {activeTab === 'store' && (
@@ -657,7 +666,8 @@ export const SettingsView: React.FC = () => {
           <div className="pt-4 border-t border-slate-200 flex justify-end">
             <button
               type="submit"
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
+              className="px-6 py-2.5 text-xs font-bold rounded-xl shadow-xs transition-colors"
+              style={{ backgroundColor: 'var(--theme-button)', color: 'var(--theme-button-text)' }}
             >
               Save Settings
             </button>

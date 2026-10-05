@@ -79,7 +79,7 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
   return (
     <>
       {/* Desktop / Tablet Vertical Category Sidebar */}
-      <div className="hidden md:flex w-44 lg:w-48 bg-white border-r border-slate-200 p-2.5 flex-col gap-1.5 overflow-y-auto shrink-0 select-none">
+      <div className="hidden md:flex w-44 lg:w-48 theme-surface border-r border-[var(--theme-border)] p-2.5 flex-col gap-1.5 overflow-y-auto shrink-0 select-none">
         <div className="px-2.5 py-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
             {t('pos.categories', 'Categories')}
@@ -91,8 +91,8 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
           onClick={() => onSelectCategory('cat_all')}
           className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left transition-all group ${
             selectedCategoryId === 'cat_all'
-              ? 'bg-blue-600 text-white font-semibold shadow-sm'
-              : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-900'
+              ? 'bg-[var(--theme-primary)] text-[var(--theme-button-text)] font-semibold shadow-sm'
+              : 'text-slate-700 hover:bg-[var(--theme-surface-variant)] hover:text-slate-900'
           }`}
         >
           <div className="flex items-center gap-2.5 min-w-0">
@@ -110,7 +110,7 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
 
           <span
             className={`text-[11px] font-mono px-1.5 py-0.5 rounded-md shrink-0 ${
-              selectedCategoryId === 'cat_all' ? 'bg-blue-700 text-blue-100' : 'text-slate-400'
+              selectedCategoryId === 'cat_all' ? 'bg-black/20 text-white' : 'text-slate-400'
             }`}
           >
             {getProductCount('cat_all')}
@@ -163,8 +163,8 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
               onClick={() => onSelectCategory(cat.id)}
               className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left transition-all group ${
                 isSelected
-                  ? 'bg-blue-600 text-white font-semibold shadow-sm'
-                  : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-900'
+                  ? 'bg-[var(--theme-primary)] text-[var(--theme-button-text)] font-semibold shadow-sm'
+                  : 'text-slate-700 hover:bg-[var(--theme-surface-variant)] hover:text-slate-900'
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
@@ -191,7 +191,7 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
 
               <span
                 className={`text-[11px] font-mono px-1.5 py-0.5 rounded-md shrink-0 ${
-                  isSelected ? 'bg-blue-700 text-blue-100' : 'text-slate-400'
+                  isSelected ? 'bg-black/20 text-white' : 'text-slate-400'
                 }`}
               >
                 {count}
@@ -208,13 +208,13 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
       </div>
 
       {/* Mobile Horizontal Scrolling Category Pills */}
-      <div className="md:hidden flex items-center gap-2 px-3 py-2 bg-white border-b border-slate-200 overflow-x-auto shrink-0 select-none scrollbar-none">
+      <div className="md:hidden flex items-center gap-2 px-3 py-2 theme-surface border-b border-[var(--theme-border)] overflow-x-auto shrink-0 select-none scrollbar-none">
         {/* All Button */}
         <button
           onClick={() => onSelectCategory('cat_all')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium shrink-0 transition-all ${
             selectedCategoryId === 'cat_all'
-              ? 'bg-blue-600 text-white font-semibold shadow-xs'
+              ? 'bg-[var(--theme-primary)] text-[var(--theme-button-text)] font-semibold shadow-xs'
               : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
           }`}
         >
@@ -222,7 +222,7 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
           <span>{t('pos.allCategories', 'All')}</span>
           <span
             className={`text-[10px] font-mono px-1 py-0.2 rounded ${
-              selectedCategoryId === 'cat_all' ? 'bg-blue-700 text-blue-100' : 'bg-slate-200/80 text-slate-500'
+              selectedCategoryId === 'cat_all' ? 'bg-black/20 text-white' : 'bg-slate-200/80 text-slate-500'
             }`}
           >
             {getProductCount('cat_all')}
@@ -264,7 +264,7 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
               onClick={() => onSelectCategory(cat.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium shrink-0 transition-all ${
                 isSelected
-                  ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                  ? 'bg-[var(--theme-primary)] text-[var(--theme-button-text)] font-semibold shadow-xs'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
               }`}
             >
@@ -276,7 +276,7 @@ export const CategoryPanel: React.FC<CategoryPanelProps> = ({
               <span>{displayName}</span>
               <span
                 className={`text-[10px] font-mono px-1 py-0.2 rounded ${
-                  isSelected ? 'bg-blue-700 text-blue-100' : 'bg-slate-200/80 text-slate-500'
+                  isSelected ? 'bg-black/20 text-white' : 'bg-slate-200/80 text-slate-500'
                 }`}
               >
                 {count}

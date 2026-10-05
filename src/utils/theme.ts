@@ -2,6 +2,8 @@
  * Color Theme Presets & Styles for AuraPOS
  */
 
+import { ThemeService, THEME_PALETTES } from '../services/themeService.ts';
+
 export type ThemeColor = 'blue' | 'emerald' | 'violet' | 'amber' | 'rose' | 'slate' | 'teal';
 
 export interface ThemePreset {
@@ -198,23 +200,16 @@ export function getTheme(themeId?: string): ThemePreset {
 }
 
 /**
- * Applies CSS root variables according to current theme color
+ * Applies CSS root variables according to current theme color and appearance
  */
-export function applyThemeVariables(themeId: ThemeColor = 'blue') {
+export function applyThemeVariables(themeId: ThemeColor = 'blue', mode?: 'light' | 'dark' | 'system') {
   if (typeof document === 'undefined') return;
-  const theme = getTheme(themeId);
-  const root = document.documentElement;
 
-  root.setAttribute('data-theme', theme.id);
-  root.style.setProperty('--color-primary', theme.hex);
-
-  // Directly override Tailwind color tokens so every button/icon/accent updates immediately
-  root.style.setProperty('--color-blue-50', theme.shades[50]);
-  root.style.setProperty('--color-blue-100', theme.shades[100]);
-  root.style.setProperty('--color-blue-200', theme.shades[200]);
-  root.style.setProperty('--color-blue-500', theme.shades[500]);
-  root.style.setProperty('--color-blue-600', theme.shades[600]);
-  root.style.setProperty('--color-blue-700', theme.shades[700]);
-  root.style.setProperty('--color-blue-800', theme.shades[800]);
-  root.style.setProperty('--color-blue-900', theme.shades[900]);
+  // Delegate to full centralized ThemeService
+  ThemeService.applyToDOM({
+    mode: mode || 'light',
+    palette: themeId as any,
+    backgroundStyle: 'soft-tint',
+    pattern: 'none'
+  });
 }

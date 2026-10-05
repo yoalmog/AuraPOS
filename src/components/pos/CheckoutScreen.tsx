@@ -242,9 +242,9 @@ export const CheckoutScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-slate-50 flex flex-col overflow-y-auto">
+    <div className="flex-1 theme-app-bg flex flex-col overflow-y-auto">
       {/* Top back bar */}
-      <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
+      <div className="theme-surface border-b border-[var(--theme-border)] px-6 py-3 flex items-center justify-between">
         <button
           onClick={() => setActiveRoute('pos')}
           className="flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-xl transition-colors"
@@ -268,9 +268,9 @@ export const CheckoutScreen: React.FC = () => {
       {/* Main Split Screen */}
       <div className="flex-1 max-w-6xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Order Summary (5 cols) */}
-        <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col justify-between h-fit">
+        <div className="lg:col-span-5 theme-card rounded-2xl border border-[var(--theme-card-border)] p-6 shadow-xs flex flex-col justify-between h-fit">
           <div>
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--theme-divider)]">
               <h3 className="text-base font-bold text-slate-900">
                 {t('checkout.orderSummary', 'Order Summary')}
               </h3>
@@ -363,7 +363,7 @@ export const CheckoutScreen: React.FC = () => {
         </div>
 
         {/* Right Column: Payment Methods & Cash Keypad (7 cols) */}
-        <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col">
+        <div className="lg:col-span-7 theme-card rounded-2xl border border-[var(--theme-card-border)] p-6 shadow-xs flex flex-col">
           {/* Payment Method Selector Tabs */}
           <div className="grid grid-cols-5 gap-2 mb-6">
             {[
@@ -382,11 +382,11 @@ export const CheckoutScreen: React.FC = () => {
                   onClick={() => setSelectedMethod(tab.id as PaymentMethod)}
                   className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all ${
                     isSelected
-                      ? 'border-blue-600 bg-blue-50 text-blue-900 font-bold ring-2 ring-blue-600 shadow-xs'
+                      ? 'border-[var(--theme-primary)] bg-[var(--theme-surface-variant)] text-[var(--theme-text-primary)] font-bold ring-2 ring-[var(--theme-primary)] shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  <Icon className={`w-5 h-5 mb-1.5 ${isSelected ? 'text-blue-600' : 'text-slate-500'}`} />
+                  <Icon className={`w-5 h-5 mb-1.5 ${isSelected ? 'text-[var(--theme-primary)]' : 'text-slate-500'}`} />
                   <span className="text-[11px] leading-tight">{tab.label}</span>
                 </button>
               );
@@ -514,7 +514,8 @@ export const CheckoutScreen: React.FC = () => {
                   type="button"
                   disabled={isProcessingCard}
                   onClick={handleStartCardPayment}
-                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-sm rounded-xl shadow-md disabled:opacity-60 transition-all flex items-center justify-center gap-2"
+                  className="w-full py-3.5 active:scale-[0.99] font-bold text-sm rounded-xl shadow-md disabled:opacity-60 transition-all flex items-center justify-center gap-2"
+                  style={{ backgroundColor: 'var(--theme-button)', color: 'var(--theme-button-text)' }}
                 >
                   <ShieldCheck className="w-4 h-4" />
                   <span>{isProcessingCard ? t('checkout.processing', 'Processing...') : t('checkout.processCardPayment', 'Process Terminal Transaction')}</span>

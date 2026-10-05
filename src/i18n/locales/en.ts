@@ -372,6 +372,7 @@ export const en = {
   'settings.title': 'Store & System Settings',
   'settings.subtitle': 'Configure business profile, color themes, thermal receipt format, loyalty rules, and hardware',
   'settings.storeProfile': 'Store Profile',
+  'settings.appearance': 'Appearance & Theme',
   'settings.brandingTheme': 'Branding & Theme',
   'settings.printers': 'Printers & Hardware',
   'settings.receipt': 'Thermal Receipt',
@@ -682,7 +683,35 @@ export const en = {
   'categories.createSampleConfirm': 'Create sample categories?',
   'categories.alreadyExists': 'This category already exists.',
   'categories.nameRequired': 'Category name is required.',
-  'categories.emptyInPos': 'No custom categories'
+  'categories.emptyInPos': 'No custom categories',
+
+  // Appearance & Theme System
+  'appearance.title': 'Theme & Appearance Engine',
+  'appearance.subtitle': 'Customize color palettes, background tints, dark mode, and high-visibility POS tokens',
+  'appearance.modeTitle': 'Theme Mode',
+  'appearance.modeDesc': 'Select light mode for daytime brightness, dark mode for reduced eye strain, or system default',
+  'appearance.light': 'Light Mode',
+  'appearance.dark': 'Dark Mode',
+  'appearance.system': 'System Default',
+  'appearance.palettesTitle': 'Color Palettes',
+  'appearance.palettesDesc': 'Architected semantic color systems that control primary buttons, card surfaces, and tinted backgrounds',
+  'appearance.customBrandTitle': 'Custom Brand Palette Configurator',
+  'appearance.customBrandDesc': 'Input your store brand hex codes. AuraPOS automatically validates accessibility ratios',
+  'appearance.bgStyleTitle': 'Background Style & Texture',
+  'appearance.bgStyleDesc': 'The selected palette tints the background naturally while maintaining readable POS product grids and cards',
+  'appearance.previewTitle': 'Live POS Terminal Preview',
+  'appearance.previewDesc': 'Simulated preview of the POS screen, category navigation, product cards, and hardware status',
+  'appearance.receiptNoticeTitle': 'Thermal Printing & Camera Safety Guaranteed',
+  'appearance.apply': 'Apply Theme',
+  'appearance.current': 'Current Active',
+  'appearance.reset': 'Default',
+  'appearance.previewMode': 'Live Preview Active',
+  'appearance.appliedTitle': 'Theme Applied',
+  'appearance.appliedMsg': 'New appearance and color palette applied globally across AuraPOS.',
+  'appearance.revertedTitle': 'Changes Cancelled',
+  'appearance.revertedMsg': 'Reverted preview back to currently active theme.',
+  'appearance.resetTitle': 'Default Theme Restored',
+  'appearance.resetMsg': 'Restored to standard Aura Blue palette and light mode.'
 };
 
 export type TranslationKey = string;
