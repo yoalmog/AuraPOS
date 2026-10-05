@@ -328,6 +328,43 @@ class NativeBridge(
     }
 
     // -------------------------------------------------------------
+    // AI Menu Scanner API Native Forwarder
+    // -------------------------------------------------------------
+
+    @JavascriptInterface
+    fun analyzeMenu(payloadJson: String, callbackId: String) {
+        bridgeScope.launch(Dispatchers.IO) {
+            try {
+                val url = java.net.URL("https://ais-dev-67yayhjbdr2qcybjx7s4jj-113121063300.us-west2.run.app/api/menu/analyze")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.connectTimeout = 30000
+                conn.readTimeout = 60000
+
+                conn.outputStream.use { os ->
+                    os.write(payloadJson.toByteArray(Charsets.UTF_8))
+                    os.flush()
+                }
+
+                val responseCode = conn.responseCode
+                val stream = if (responseCode in 200..299) conn.inputStream else conn.errorStream
+                val responseStr = stream.bufferedReader().use { it.readText() }
+
+                postCallback(callbackId, responseStr)
+            } catch (e: Exception) {
+                Log.e("NativeBridge", "analyzeMenu native failed: ${e.message}", e)
+                val errObj = JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message ?: "Native OCR bridge request failed")
+                }
+                postCallback(callbackId, errObj.toString())
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
     // Safe Helper Dispatchers to JavaScript
     // -------------------------------------------------------------
 

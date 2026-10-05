@@ -67,6 +67,7 @@ declare global {
       stopBarcodeScanner: () => void;
 
       getDiagnostics: () => string;
+      analyzeMenu?: (payloadJson: string, callbackId: string) => void;
     };
     __AuraPOSNativeCallbacks?: Record<string, (result: any) => void>;
     __AuraPOSEventBus?: {
@@ -522,6 +523,29 @@ export class NativeBridgeService {
           statusMessage: `Diagnostics error: ${e.message}`
         };
       }
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // AI Menu Scanner Native Bridge Forwarder
+  // --------------------------------------------------------------------------
+  static menuScanner = {
+    analyzeMenuViaNative: async (
+      payloadJson: string
+    ): Promise<{ success: boolean; data?: any; error?: string }> => {
+      if (
+        !NativeBridgeService.isNativeAndroid() ||
+        !window.AndroidPOSNative?.analyzeMenu
+      ) {
+        return {
+          success: false,
+          error: 'Native Android menu scanner is unavailable.'
+        };
+      }
+
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.analyzeMenu!(payloadJson, callbackId);
+      });
     }
   };
 }
