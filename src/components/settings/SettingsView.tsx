@@ -23,12 +23,13 @@ import {
   Lock,
   UserCheck,
   FolderTree,
-  Accessibility
+  Accessibility,
+  Server
 } from 'lucide-react';
 import { PrinterSettings } from './printers/PrinterSettings.tsx';
 import { AccessibilitySettingsTab } from './accessibility/AccessibilitySettingsTab.tsx';
 import { AppearanceSettingsTab } from './appearance/AppearanceSettingsTab.tsx';
-import { AiBackendDiagnosticsTab } from './diagnostics/AiBackendDiagnosticsTab.tsx';
+import { SystemDiagnostics } from './SystemDiagnostics.tsx';
 import { THEME_PRESETS, ThemeColor, applyThemeVariables } from '../../utils/theme.ts';
 import { STORE_LOGO_PRESETS } from '../../utils/productImages.ts';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n/translations.ts';
@@ -212,7 +213,7 @@ export const SettingsView: React.FC = () => {
         ) : activeTab === 'accessibility' ? (
           <AccessibilitySettingsTab />
         ) : activeTab === 'diagnostics' ? (
-          <AiBackendDiagnosticsTab />
+          <SystemDiagnostics />
         ) : (
           <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
           {activeTab === 'store' && (

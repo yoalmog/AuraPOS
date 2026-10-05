@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext.tsx';
 import {
   Sparkles,
@@ -44,6 +44,7 @@ import {
 import { MenuScannerImportService } from '../../services/menuScannerImportService.ts';
 import { optimizeImageForOCR } from '../../utils/imageOptimizer.ts';
 import { generateSampleMenuPages } from '../../utils/sampleMenuGenerator.ts';
+import { useAuraNetwork } from '../../hooks/useAuraNetwork.ts';
 
 export const MenuScannerView: React.FC = () => {
   const {
@@ -54,6 +55,9 @@ export const MenuScannerView: React.FC = () => {
     settings,
     setActiveRoute
   } = usePOS();
+
+  // Network Hook: Centralized request lifecycle, pre-flight health checks, diagnostic logging
+  const auraNetwork = useAuraNetwork({ timeoutMs: 120000, checkHealthOnMount: true });
 
   // Wizard Step State
   const [currentStep, setCurrentStep] = useState<MenuScannerStep>('capture');
@@ -88,18 +92,6 @@ export const MenuScannerView: React.FC = () => {
   const [extractedProducts, setExtractedProducts] = useState<ExtractedProduct[]>([]);
   const [scanMetadata, setScanMetadata] = useState<{ title?: string; notes?: string }>({});
 
-  // Analysis Loading State & Animation Stage
-  const [analysisProgressStage, setAnalysisProgressStage] = useState<string>('Uploading images...');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [diagnosticDetails, setDiagnosticDetails] = useState<{
-    stage: string;
-    endpoint: string;
-    status: number;
-    statusText: string;
-    errorType: ExtractionErrorType;
-    requestId: string;
-    timestamp: string;
-  } | null>(null);
   const [showDiagnosticDetails, setShowDiagnosticDetails] = useState<boolean>(false);
   const [copiedDiagnostic, setCopiedDiagnostic] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -226,8 +218,7 @@ export const MenuScannerView: React.FC = () => {
       });
       const samplePages = await generateSampleMenuPages();
       setPages(samplePages);
-      setErrorMessage(null);
-      setDiagnosticDetails(null);
+      auraNetwork.clearError();
       showToast({
         type: 'success',
         title: '5 Pages Ready',
@@ -244,7 +235,7 @@ export const MenuScannerView: React.FC = () => {
   };
 
   // -------------------------------------------------------------
-  // AI Extraction Flow
+  // AI Extraction Flow via useAuraNetwork
   // -------------------------------------------------------------
   const handleStartAnalysis = async () => {
     if (pages.length === 0) {
@@ -258,19 +249,12 @@ export const MenuScannerView: React.FC = () => {
 
     try {
       setCurrentStep('analyzing');
-      setErrorMessage(null);
-      setDiagnosticDetails(null);
-      setAnalysisProgressStage('Validating menu images...');
 
-      const result = await MenuScannerApi.analyzeMenu(pages, (stage) => {
-        setAnalysisProgressStage(stage);
-      });
+      const result = await auraNetwork.analyzeMenuWithAi(pages);
 
       if (!result.success || !result.data) {
         throw new Error(result.error || 'Failed to extract menu data.');
       }
-
-      setAnalysisProgressStage('Reconciling against existing AuraPOS inventory...');
 
       // Reconcile and calculate duplicates / conflict resolutions
       const processed = MenuScannerImportService.processScanResult(
@@ -294,49 +278,22 @@ export const MenuScannerView: React.FC = () => {
       });
     } catch (err: any) {
       console.error('Menu scan error:', err);
-      let userMsg = err.message || 'Error processing menu scan.';
-      let errType: ExtractionErrorType = 'UNKNOWN_ERROR';
-
-      if (err instanceof ExtractionDiagnosticError || err.errorType) {
-        const diag = {
-          stage: err.stage || 'EXTRACTION_STAGE',
-          endpoint: err.endpoint || '/api/menu/analyze',
-          status: err.status || 0,
-          statusText: err.statusText || '',
-          errorType: (err.errorType as ExtractionErrorType) || 'UNKNOWN_ERROR',
-          requestId: err.requestId || `diag_${Date.now()}`,
-          timestamp: err.timestamp || new Date().toISOString()
-        };
-        setDiagnosticDetails(diag);
-        errType = diag.errorType;
-        userMsg = err.message;
-      } else {
-        setDiagnosticDetails({
-          stage: 'CLIENT_EXECUTION',
-          endpoint: 'client_call',
-          status: 0,
-          statusText: 'CLIENT_EXCEPTION',
-          errorType: 'UNKNOWN_ERROR',
-          requestId: `cli_${Date.now()}`,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      setErrorMessage(userMsg);
       setCurrentStep('capture');
 
       let toastTitle = 'Scan Failed';
-      if (errType === 'AI_HIGH_DEMAND') toastTitle = 'AI Demand Spike';
-      else if (errType === 'AI_RATE_LIMIT') toastTitle = 'Rate Limit Reached';
-      else if (errType === 'OFFLINE_ERROR') toastTitle = 'Device Offline';
-      else if (errType === 'TIMEOUT_ERROR') toastTitle = 'Request Timed Out';
-      else if (errType === 'NETWORK_ERROR') toastTitle = 'Connection Error';
-      else if (errType === 'PAYLOAD_TOO_LARGE') toastTitle = 'Payload Too Large';
+      const currentErrorType = auraNetwork.errorType || (err as any).errorType;
+
+      if (currentErrorType === 'AI_HIGH_DEMAND') toastTitle = 'AI Demand Spike';
+      else if (currentErrorType === 'AI_RATE_LIMIT') toastTitle = 'Rate Limit Reached';
+      else if (currentErrorType === 'NO_INTERNET' || currentErrorType === 'OFFLINE_ERROR') toastTitle = 'Device Offline';
+      else if (currentErrorType === 'BACKEND_TIMEOUT' || currentErrorType === 'TIMEOUT_ERROR') toastTitle = 'Request Timed Out';
+      else if (currentErrorType === 'BACKEND_UNREACHABLE' || currentErrorType === 'NETWORK_ERROR') toastTitle = 'Connection Error';
+      else if (currentErrorType === 'PAYLOAD_TOO_LARGE') toastTitle = 'Payload Too Large';
 
       showToast({
         type: 'error',
         title: toastTitle,
-        message: userMsg
+        message: auraNetwork.errorMessage || err.message || 'Error processing menu scan.'
       });
     }
   };
@@ -452,9 +409,47 @@ export const MenuScannerView: React.FC = () => {
             <div className="absolute right-0 top-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
             <div className="relative z-10 max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-300 text-xs font-semibold mb-3">
-                <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                AI Multimodal OCR & Catalog Importer
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-300 text-xs font-semibold">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                  AI Multimodal OCR & Catalog Importer
+                </div>
+
+                {/* AI Backend Health Status Badge */}
+                <button
+                  type="button"
+                  onClick={() => auraNetwork.checkBackendHealth()}
+                  disabled={auraNetwork.health.isChecking}
+                  title="Click to re-verify AI backend connectivity"
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono transition-all border cursor-pointer ${
+                    auraNetwork.health.isHealthy === true
+                      ? 'bg-emerald-500/20 border-emerald-400/30 text-emerald-300 hover:bg-emerald-500/30'
+                      : auraNetwork.health.isHealthy === false
+                      ? 'bg-rose-500/20 border-rose-400/30 text-rose-300 hover:bg-rose-500/30'
+                      : 'bg-slate-700/60 border-slate-600 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      auraNetwork.health.isChecking
+                        ? 'bg-amber-400 animate-pulse'
+                        : auraNetwork.health.isHealthy === true
+                        ? 'bg-emerald-400'
+                        : auraNetwork.health.isHealthy === false
+                        ? 'bg-rose-400'
+                        : 'bg-slate-400'
+                    }`}
+                  />
+                  <span>
+                    {auraNetwork.health.isChecking
+                      ? 'Checking Backend...'
+                      : auraNetwork.health.isHealthy === true
+                      ? `Backend Ready (${auraNetwork.health.latencyMs}ms)`
+                      : auraNetwork.health.isHealthy === false
+                      ? 'Backend Unreachable'
+                      : 'Backend Health Check'}
+                  </span>
+                </button>
               </div>
 
               <h1 className="text-2xl sm:text-3xl font-black tracking-tight mb-2">
@@ -496,17 +491,17 @@ export const MenuScannerView: React.FC = () => {
           </div>
 
           {/* Structured Diagnostic Error Display */}
-          {errorMessage && (
+          {auraNetwork.errorMessage && (
             <div className="mb-8 rounded-2xl bg-rose-50/90 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 p-5 shadow-sm transition-all animate-fadeIn">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div className="flex items-start gap-3.5">
                   <div className="p-2.5 rounded-xl bg-rose-100 dark:bg-rose-900/60 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
-                    {diagnosticDetails?.errorType === 'OFFLINE_ERROR' ? (
+                    {auraNetwork.diagnosticState?.errorType === 'NO_INTERNET' ? (
                       <WifiOff className="w-6 h-6" />
-                    ) : diagnosticDetails?.errorType === 'TIMEOUT_ERROR' ? (
+                    ) : auraNetwork.diagnosticState?.errorType === 'BACKEND_TIMEOUT' ? (
                       <Clock className="w-6 h-6" />
-                    ) : diagnosticDetails?.errorType === 'AI_HIGH_DEMAND' ||
-                      diagnosticDetails?.errorType === 'AI_RATE_LIMIT' ? (
+                    ) : auraNetwork.diagnosticState?.errorType === 'AI_HIGH_DEMAND' ||
+                      auraNetwork.diagnosticState?.errorType === 'AI_RATE_LIMIT' ? (
                       <AlertTriangle className="w-6 h-6 text-amber-600 dark:text-amber-400" />
                     ) : (
                       <AlertCircle className="w-6 h-6" />
@@ -515,46 +510,56 @@ export const MenuScannerView: React.FC = () => {
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <h4 className="font-bold text-base text-rose-950 dark:text-rose-200">
-                        {diagnosticDetails?.errorType === 'AI_HIGH_DEMAND'
+                        {auraNetwork.diagnosticState?.errorType === 'AI_HIGH_DEMAND'
                           ? 'AI Server High Demand Spike'
-                          : diagnosticDetails?.errorType === 'AI_RATE_LIMIT'
+                          : auraNetwork.diagnosticState?.errorType === 'AI_RATE_LIMIT'
                           ? 'Google AI Rate Limit Reached'
-                          : diagnosticDetails?.errorType === 'OFFLINE_ERROR'
+                          : auraNetwork.diagnosticState?.errorType === 'NO_INTERNET'
                           ? 'Terminal Offline'
-                          : diagnosticDetails?.errorType === 'TIMEOUT_ERROR'
+                          : auraNetwork.diagnosticState?.errorType === 'BACKEND_TIMEOUT'
                           ? 'OCR Extraction Timed Out'
-                          : diagnosticDetails?.errorType === 'PAYLOAD_TOO_LARGE'
+                          : auraNetwork.diagnosticState?.errorType === 'PAYLOAD_TOO_LARGE'
                           ? 'Image Payload Exceeds Limits'
-                          : diagnosticDetails?.errorType === 'NETWORK_ERROR'
+                          : auraNetwork.diagnosticState?.errorType === 'BACKEND_UNREACHABLE'
                           ? 'Network Connection Issue'
                           : 'Extraction Error'}
                       </h4>
-                      {diagnosticDetails?.status ? (
+                      {auraNetwork.diagnosticState?.status ? (
                         <span className="px-2 py-0.5 rounded-md bg-rose-200/60 dark:bg-rose-900/80 text-rose-800 dark:text-rose-300 font-mono text-xs font-semibold">
-                          HTTP {diagnosticDetails.status}
+                          HTTP {auraNetwork.diagnosticState.status}
                         </span>
                       ) : null}
-                      {diagnosticDetails?.errorType ? (
+                      {auraNetwork.diagnosticState?.errorType ? (
                         <span className="px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-[11px]">
-                          {diagnosticDetails.errorType}
+                          {auraNetwork.diagnosticState.errorType}
                         </span>
                       ) : null}
                     </div>
 
                     <p className="text-sm text-rose-900 dark:text-rose-200 mt-1 leading-relaxed">
-                      {errorMessage}
+                      {auraNetwork.errorMessage}
                     </p>
 
                     {/* Actionable Advice */}
-                    {diagnosticDetails?.errorType === 'AI_HIGH_DEMAND' && (
+                    {auraNetwork.diagnosticState?.errorType === 'AI_HIGH_DEMAND' && (
                       <p className="text-xs text-amber-800 dark:text-amber-300 mt-1.5 font-medium flex items-center gap-1.5">
                         <Zap className="w-3.5 h-3.5" />
-                        Temporary peak demand spikes usually clear in 5-10 seconds. Tap "Retry Extraction" below.
+                        Temporary peak demand spikes usually clear in 5-10 seconds. All {pages.length} scanned pages are preserved. Tap "Retry Extraction" below.
                       </p>
                     )}
-                    {diagnosticDetails?.errorType === 'TIMEOUT_ERROR' && (
+                    {auraNetwork.diagnosticState?.errorType === 'BACKEND_TIMEOUT' && (
                       <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5">
-                        Tip: For large menus (5+ pages), ensure a stable connection or scan 2-3 pages at a time.
+                        Tip: Large multimodal scans may take longer under high network traffic. All {pages.length} scanned pages remain safely loaded. Tap "Retry Extraction" to resume.
+                      </p>
+                    )}
+                    {auraNetwork.diagnosticState?.errorType === 'BACKEND_UNREACHABLE' && (
+                      <p className="text-xs text-rose-800 dark:text-rose-300 mt-1.5">
+                        Check that your AI Backend server is running. You can test connectivity or update the endpoint under "AI Backend Settings". Your {pages.length} pages are saved.
+                      </p>
+                    )}
+                    {auraNetwork.diagnosticState?.errorType === 'NO_INTERNET' && (
+                      <p className="text-xs text-rose-800 dark:text-rose-300 mt-1.5">
+                        Internet connection was lost. Reconnect your Wi-Fi or mobile data and tap "Retry Extraction". No pages need to be re-scanned.
                       </p>
                     )}
                   </div>
@@ -594,8 +599,7 @@ export const MenuScannerView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setErrorMessage(null);
-                      setDiagnosticDetails(null);
+                      auraNetwork.clearError();
                     }}
                     className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 font-medium text-xs transition-all cursor-pointer"
                   >
@@ -605,7 +609,7 @@ export const MenuScannerView: React.FC = () => {
               </div>
 
               {/* Collapsible Technical Diagnostics Drawer */}
-              {showDiagnosticDetails && diagnosticDetails && (
+              {showDiagnosticDetails && auraNetwork.diagnosticState && (
                 <div className="mt-4 pt-4 border-t border-rose-200 dark:border-rose-800/60">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
@@ -614,7 +618,7 @@ export const MenuScannerView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        const payload = JSON.stringify(diagnosticDetails, null, 2);
+                        const payload = JSON.stringify(auraNetwork.diagnosticState, null, 2);
                         navigator.clipboard?.writeText(payload);
                         setCopiedDiagnostic(true);
                         setTimeout(() => setCopiedDiagnostic(false), 2500);
@@ -638,24 +642,24 @@ export const MenuScannerView: React.FC = () => {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono bg-white dark:bg-slate-900 rounded-xl p-3 border border-slate-200 dark:border-slate-800">
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase">Stage</span>
-                      <span className="text-slate-800 dark:text-slate-200 font-semibold">{diagnosticDetails.stage}</span>
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold">{auraNetwork.diagnosticState.stage}</span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase">Endpoint</span>
-                      <span className="text-slate-800 dark:text-slate-200 font-semibold truncate block" title={diagnosticDetails.endpoint}>
-                        {diagnosticDetails.endpoint}
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold truncate block" title={auraNetwork.diagnosticState.endpoint}>
+                        {auraNetwork.diagnosticState.endpoint}
                       </span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase">Status</span>
                       <span className="text-slate-800 dark:text-slate-200 font-semibold">
-                        {diagnosticDetails.status ? `${diagnosticDetails.status} ${diagnosticDetails.statusText}` : 'Network Fail (0)'}
+                        {auraNetwork.diagnosticState.status ? `${auraNetwork.diagnosticState.status} ${auraNetwork.diagnosticState.statusText}` : 'Network Fail (0)'}
                       </span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase">Request ID</span>
-                      <span className="text-slate-800 dark:text-slate-200 font-semibold truncate block" title={diagnosticDetails.requestId}>
-                        {diagnosticDetails.requestId}
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold truncate block" title={auraNetwork.diagnosticState.requestId}>
+                        {auraNetwork.diagnosticState.requestId}
                       </span>
                     </div>
                   </div>
@@ -721,7 +725,7 @@ export const MenuScannerView: React.FC = () => {
 
           <h3 className="text-2xl font-black tracking-tight mb-2">Analyzing Menu Structure</h3>
           <p className="text-sm text-blue-300 font-mono mb-6 max-w-md">
-            {analysisProgressStage}
+            {auraNetwork.progressStage || 'Analyzing menu structure...'}
           </p>
 
           <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden mb-4">
