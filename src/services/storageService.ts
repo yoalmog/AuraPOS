@@ -48,7 +48,52 @@ const STORAGE_KEYS = {
   CURRENT_USER_ID: 'aurapos_current_user_id_v2',
   PRINTERS: 'aurapos_printers_v2',
   PRINTER_ROUTES: 'aurapos_printer_routes_v2',
-  PRINT_JOBS: 'aurapos_print_jobs_v2'
+  PRINT_JOBS: 'aurapos_print_jobs_v2',
+  QR_PAYMENTS: 'aurapos_qr_payments_v2',
+  PAYMENT_AUDIT_LOGS: 'aurapos_payment_audit_logs_v2',
+  PRODUCT_IMAGE_HISTORY: 'aurapos_product_image_history_v2'
+};
+
+export interface PaymentAuditLog {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  terminalId?: string;
+  action: string;
+  details: string;
+}
+
+export const INITIAL_QR_PAYMENT_SETTINGS: import('../types/pos.ts').QrPaymentSettings = {
+  yape: {
+    enabled: true,
+    displayName: 'Yape',
+    phoneAccount: '',
+    accountHolder: '',
+    qrImageUrl: '',
+    qrVersion: 1,
+    receiptLabel: 'Pay with Yape',
+    paymentInstructions: 'Scan with your Yape app to pay',
+    showOnCheckout: true,
+    showOnReceipt: true,
+    qrPrintSize: 'medium',
+    qrPrintPosition: 'AFTER_PAYMENT'
+  },
+  plin: {
+    enabled: true,
+    displayName: 'Plin',
+    phoneAccount: '',
+    accountHolder: '',
+    qrImageUrl: '',
+    qrVersion: 1,
+    receiptLabel: 'Pay with Plin',
+    paymentInstructions: 'Scan with your Plin or Banking app to pay',
+    showOnCheckout: true,
+    showOnReceipt: true,
+    qrPrintSize: 'medium',
+    qrPrintPosition: 'AFTER_PAYMENT'
+  },
+  printBothOnReceipts: false
 };
 
 // Purge legacy demo keys from v1
@@ -273,6 +318,49 @@ export class StorageService {
   }
   static savePrintJobs(jobs: PrintJob[]): void {
     setStorageItem(STORAGE_KEYS.PRINT_JOBS, jobs);
+  }
+
+  // QR Digital Payments Configuration (Yape & Plin)
+  static getQrPaymentSettings(): import('../types/pos.ts').QrPaymentSettings {
+    return getStorageItem<import('../types/pos.ts').QrPaymentSettings>(
+      STORAGE_KEYS.QR_PAYMENTS,
+      INITIAL_QR_PAYMENT_SETTINGS
+    );
+  }
+  static saveQrPaymentSettings(settings: import('../types/pos.ts').QrPaymentSettings): void {
+    setStorageItem(STORAGE_KEYS.QR_PAYMENTS, settings);
+  }
+
+  // Payment Configuration Audit Logs
+  static getPaymentAuditLogs(): PaymentAuditLog[] {
+    return getStorageItem<PaymentAuditLog[]>(STORAGE_KEYS.PAYMENT_AUDIT_LOGS, []);
+  }
+  static savePaymentAuditLogs(logs: PaymentAuditLog[]): void {
+    setStorageItem(STORAGE_KEYS.PAYMENT_AUDIT_LOGS, logs);
+  }
+  static logPaymentAudit(actionData: Omit<PaymentAuditLog, 'id' | 'timestamp'>): void {
+    const logs = this.getPaymentAuditLogs();
+    const newLog: PaymentAuditLog = {
+      id: `audit_pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      ...actionData
+    };
+    logs.unshift(newLog);
+    this.savePaymentAuditLogs(logs.slice(0, 200));
+  }
+
+  // Product Image History & Versions
+  static getProductImageHistory(productId?: string): import('../types/pos.ts').ProductImageMetadata[] {
+    const all = getStorageItem<import('../types/pos.ts').ProductImageMetadata[]>(
+      STORAGE_KEYS.PRODUCT_IMAGE_HISTORY,
+      []
+    );
+    return productId ? all.filter(m => m.productId === productId) : all;
+  }
+  static saveProductImageMetadata(meta: import('../types/pos.ts').ProductImageMetadata): void {
+    const all = this.getProductImageHistory();
+    all.unshift(meta);
+    setStorageItem(STORAGE_KEYS.PRODUCT_IMAGE_HISTORY, all.slice(0, 500));
   }
 
   // Reset all local storage data

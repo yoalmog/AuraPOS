@@ -2,7 +2,10 @@ package com.aurapos.pos
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -30,6 +33,7 @@ import com.aurapos.pos.hardware.*
  * - Hardware barcode gun / wedge scanner interception
  * - Native hardware bridge initialization
  * - Bluetooth, USB, and LAN printer permissions
+ * - Camera & File Chooser support for AI Menu Scanner
  * - Master DeviceManager lifecycle integration
  */
 class MainActivity : AppCompatActivity() {
@@ -46,7 +50,45 @@ class MainActivity : AppCompatActivity() {
     lateinit var deviceManager: DeviceManager
         private set
 
-    // Permission launcher for Android 12+ Bluetooth
+    // File Chooser state for HTML5 <input type="file"> support
+    private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val intent = result.data
+            val uris: Array<Uri>? = when {
+                intent?.clipData != null -> {
+                    val count = intent.clipData!!.itemCount
+                    Array(count) { i -> intent.clipData!!.getItemAt(i).uri }
+                }
+                intent?.data != null -> arrayOf(intent.data!!)
+                else -> null
+            }
+            fileUploadCallback?.onReceiveValue(uris)
+        } else {
+            fileUploadCallback?.onReceiveValue(null)
+        }
+        fileUploadCallback = null
+    }
+
+    // Camera WebRTC Permission state
+    private var pendingPermissionRequest: PermissionRequest? = null
+
+    private val requestCameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            pendingPermissionRequest?.grant(pendingPermissionRequest?.resources)
+        } else {
+            pendingPermissionRequest?.deny()
+            Toast.makeText(this, "Camera permission is required to scan menus.", Toast.LENGTH_SHORT).show()
+        }
+        pendingPermissionRequest = null
+    }
+
+    // Permission launcher for Android 12+ Bluetooth & Camera
     private val requestBluetoothPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -55,12 +97,6 @@ class MainActivity : AppCompatActivity() {
 
         if (scanGranted && connectGranted) {
             Toast.makeText(this, "Bluetooth printer permissions granted.", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(
-                this,
-                "Bluetooth permission denied. Bluetooth thermal printers (X18 Mini) cannot be paired without permission.",
-                Toast.LENGTH_LONG
-            ).show()
         }
     }
 
@@ -106,6 +142,50 @@ class MainActivity : AppCompatActivity() {
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                     android.util.Log.d("AuraPOS-Web", "${message.message()} -- From line ${message.lineNumber()} of ${message.sourceId()}")
                     return true
+                }
+
+                // Handle HTML5 <input type="file"> file picking for menu images & PDFs
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?
+                ): Boolean {
+                    fileUploadCallback?.onReceiveValue(null)
+                    fileUploadCallback = filePathCallback
+
+                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    }
+
+                    return try {
+                        fileChooserLauncher.launch(intent)
+                        true
+                    } catch (e: Exception) {
+                        android.util.Log.e("AuraPOS-Web", "File chooser launch failed", e)
+                        fileUploadCallback?.onReceiveValue(null)
+                        fileUploadCallback = null
+                        false
+                    }
+                }
+
+                // Handle HTML5 navigator.mediaDevices.getUserMedia camera permission
+                override fun onPermissionRequest(request: PermissionRequest?) {
+                    request?.let {
+                        val resources = it.resources
+                        val hasCamera = resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                        if (hasCamera) {
+                            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                it.grant(resources)
+                            } else {
+                                pendingPermissionRequest = it
+                                requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                        } else {
+                            it.grant(resources)
+                        }
+                    }
                 }
             }
 
@@ -175,22 +255,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkAndRequestPermissions() {
+        val permissionsToRequest = mutableListOf<String>()
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.CAMERA)
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val permissionsToRequest = mutableListOf<String>()
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN)
             }
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
             }
-            if (permissionsToRequest.isNotEmpty()) {
-                requestBluetoothPermissionsLauncher.launch(permissionsToRequest.toTypedArray())
-            }
         } else {
             // Android 8 - 11 legacy Bluetooth
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                requestBluetoothPermissionsLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION))
+                permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            requestBluetoothPermissionsLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 

@@ -406,7 +406,7 @@ export const ProductsView: React.FC = () => {
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
                           {p.imageUrl ? (
-                            <div className="w-9 h-9 rounded-xl overflow-hidden shrink-0 shadow-2xs border border-slate-200 bg-slate-100">
+                            <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-xs border border-slate-200 bg-slate-100">
                               <img
                                 src={p.imageUrl}
                                 alt={p.name}
@@ -418,13 +418,13 @@ export const ProductsView: React.FC = () => {
                             </div>
                           ) : (
                             <div
-                              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-2xs"
+                              className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
                               style={{
-                                backgroundColor: p.color ? `${p.color}15` : '#EFF6FF',
+                                backgroundColor: p.color ? `${p.color}18` : '#EFF6FF',
                                 color: p.color || '#2563EB'
                               }}
                             >
-                              <Coffee className="w-4 h-4" />
+                              <Coffee className="w-5 h-5" />
                             </div>
                           )}
                           <div>

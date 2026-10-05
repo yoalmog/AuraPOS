@@ -98,6 +98,8 @@ export interface Product {
   color?: string;
   iconName?: string;
   imageUrl?: string;
+  imageSource?: ProductImageSource;
+  imageHistory?: ProductImageMetadata[];
   variants?: ProductVariant[];
   taxId?: string;
   createdAt: string;
@@ -150,7 +152,52 @@ export interface LoyaltyTransaction {
   createdAt: string;
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'mobile' | 'bank' | 'loyalty' | 'other';
+export type PaymentMethod = 'cash' | 'card' | 'mobile' | 'bank' | 'loyalty' | 'yape' | 'plin' | 'other';
+
+export type QrPrintSize = 'small' | 'medium' | 'large';
+export type QrPrintPosition = 'BEFORE_TOTAL' | 'AFTER_TOTAL' | 'AFTER_PAYMENT' | 'BOTTOM';
+export type QrPaymentStatus = 'PENDING' | 'CUSTOMER_SCANNED' | 'AWAITING_CONFIRMATION' | 'CONFIRMED' | 'CANCELLED' | 'FAILED';
+
+export interface QrPaymentMethodConfig {
+  enabled: boolean;
+  displayName: string;
+  phoneAccount: string;
+  accountHolder: string;
+  qrImageUrl?: string; // Real uploaded data URL or asset reference
+  qrAssetId?: string;
+  qrVersion: number; // Incremented whenever QR image is updated
+  receiptLabel: string;
+  paymentInstructions: string;
+  showOnCheckout: boolean;
+  showOnReceipt: boolean;
+  qrPrintSize: QrPrintSize; // default: 'medium'
+  qrPrintPosition: QrPrintPosition; // default: 'AFTER_PAYMENT'
+  lastUpdated?: string;
+  updatedBy?: string;
+}
+
+export interface QrPaymentSettings {
+  yape: QrPaymentMethodConfig;
+  plin: QrPaymentMethodConfig;
+  printBothOnReceipts?: boolean;
+}
+
+export type ProductImageSource = 'REAL_UPLOAD' | 'MENU_IMAGE' | 'AI_GENERATED' | 'NO_IMAGE';
+
+export interface ProductImageMetadata {
+  imageId: string;
+  productId: string;
+  source: ProductImageSource;
+  url: string;
+  prompt?: string;
+  style?: string;
+  background?: string;
+  createdAt: string;
+  createdBy?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  isCurrent: boolean;
+}
 
 export interface PaymentRecord {
   id: string;
@@ -197,6 +244,9 @@ export interface Sale {
   taxRate: number;
   total: number;
   payments: PaymentRecord[];
+  qrPaymentMethod?: 'yape' | 'plin';
+  qrPaymentConfigVersion?: number;
+  qrPaymentImageUrl?: string;
   status: SaleStatus;
   notes?: string;
   isOffline?: boolean;

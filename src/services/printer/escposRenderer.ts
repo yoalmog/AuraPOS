@@ -148,6 +148,28 @@ export class EscPosRenderer {
     return this;
   }
 
+  /**
+   * ESC/POS standard raster bit image (GS v 0 m xL xH yL yH d1...dk)
+   */
+  rasterBitmap(raster: { width: number; height: number; bytesPerRow: number; data: Uint8Array }): this {
+    if (!raster || !raster.data || raster.data.length === 0) return this;
+
+    this.align('center');
+    const xL = raster.bytesPerRow % 256;
+    const xH = Math.floor(raster.bytesPerRow / 256);
+    const yL = raster.height % 256;
+    const yH = Math.floor(raster.height / 256);
+
+    // GS v 0 0 xL xH yL yH
+    this.buffer.push(0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH);
+    for (let i = 0; i < raster.data.length; i++) {
+      this.buffer.push(raster.data[i]);
+    }
+    this.line();
+    this.align('left');
+    return this;
+  }
+
   toBytes(): Uint8Array {
     return new Uint8Array(this.buffer);
   }
@@ -157,16 +179,45 @@ export class EscPosRenderer {
   // -------------------------------------------------------------
 
   /**
-   * Render complete customer sales receipt
+   * Render complete customer sales receipt with optional real Yape / Plin QR payment image
    */
   static renderCustomerReceipt(
     sale: Sale,
     settings: StoreSettings,
-    options: EscPosRenderOptions = {}
+    options: EscPosRenderOptions & {
+      qrRaster?: { width: number; height: number; bytesPerRow: number; data: Uint8Array } | null;
+      qrLabel?: string;
+      qrInstructions?: string;
+      qrPosition?: 'BEFORE_TOTAL' | 'AFTER_TOTAL' | 'AFTER_PAYMENT' | 'BOTTOM';
+    } = {}
   ): { bytes: Uint8Array; previewText: string } {
     const width = options.charactersPerLine || (options.paperWidth === 80 ? 48 : 32);
     const renderer = new EscPosRenderer();
     const textLines: string[] = [];
+
+    const qrPosition = options.qrPosition || 'AFTER_PAYMENT';
+
+    // Helper to print the real QR image section
+    const appendQrSection = () => {
+      if (!options.qrRaster) return;
+
+      renderer.feed(1).align('center');
+      renderer.bold(true);
+      const label = options.qrLabel || 'PAY WITH QR';
+      renderer.line(`*** ${label.toUpperCase()} ***`);
+      textLines.push(`*** ${label.toUpperCase()} ***`);
+      renderer.bold(false);
+
+      // Print real ESC/POS raster bitmap
+      renderer.rasterBitmap(options.qrRaster);
+      textLines.push('[REAL QR IMAGE PRINTED]');
+
+      if (options.qrInstructions) {
+        renderer.align('center').line(options.qrInstructions);
+        textLines.push(options.qrInstructions);
+      }
+      renderer.feed(1).align('left');
+    };
 
     // 1. Header & Store Info
     renderer.align('center').bold(true).doubleHeightWidth(true);
@@ -226,6 +277,11 @@ export class EscPosRenderer {
       }
     });
 
+    // BEFORE_TOTAL QR insertion
+    if (qrPosition === 'BEFORE_TOTAL') {
+      appendQrSection();
+    }
+
     renderer.separator('-', width);
     textLines.push('-'.repeat(width));
 
@@ -255,17 +311,33 @@ export class EscPosRenderer {
     textLines.push('TOTAL:'.padEnd(width - grandTotalStr.length) + grandTotalStr);
     renderer.doubleHeightWidth(false).bold(false);
 
+    // AFTER_TOTAL QR insertion
+    if (qrPosition === 'AFTER_TOTAL') {
+      appendQrSection();
+    }
+
     // 5. Payment details
     sale.payments.forEach(p => {
       const amtStr = `${settings.currency || '$'}${p.amount.toFixed(2)}`;
-      renderer.twoColumns(`Paid (${p.method.toUpperCase()}):`, amtStr, width);
-      textLines.push(`Paid (${p.method.toUpperCase()}):`.padEnd(width - amtStr.length) + amtStr);
+      const methodName = p.method === 'yape' ? 'YAPE' : p.method === 'plin' ? 'PLIN' : p.method.toUpperCase();
+      renderer.twoColumns(`Paid (${methodName}):`, amtStr, width);
+      textLines.push(`Paid (${methodName}):`.padEnd(width - amtStr.length) + amtStr);
     });
 
-    // 6. Barcode / QR Code
+    // AFTER_PAYMENT QR insertion (Default)
+    if (qrPosition === 'AFTER_PAYMENT') {
+      appendQrSection();
+    }
+
+    // 6. Barcode / Receipt Lookup code
     if (options.showBarcode !== false) {
       renderer.feed(1);
       renderer.barcode(sale.receiptNumber || sale.id);
+    }
+
+    // BOTTOM QR insertion
+    if (qrPosition === 'BOTTOM') {
+      appendQrSection();
     }
 
     // 7. Footer
@@ -285,6 +357,63 @@ export class EscPosRenderer {
     if (options.kickDrawer) {
       renderer.pulseDrawer();
     }
+
+    return {
+      bytes: renderer.toBytes(),
+      previewText: textLines.join('\n')
+    };
+  }
+
+  /**
+   * Render QR test receipt
+   */
+  static renderQrTestReceipt(params: {
+    providerName: string;
+    accountHolder?: string;
+    phoneAccount?: string;
+    qrRaster?: { width: number; height: number; bytesPerRow: number; data: Uint8Array } | null;
+    instructions?: string;
+    charactersPerLine?: number;
+  }): { bytes: Uint8Array; previewText: string } {
+    const width = params.charactersPerLine || 32;
+    const renderer = new EscPosRenderer();
+    const textLines: string[] = [];
+
+    renderer.align('center').bold(true).doubleHeightWidth(true);
+    renderer.line(`*** ${params.providerName.toUpperCase()} TEST QR ***`);
+    textLines.push(`*** ${params.providerName.toUpperCase()} TEST QR ***`);
+    renderer.doubleHeightWidth(false).bold(false);
+
+    renderer.line(`Date: ${new Date().toLocaleString()}`);
+    textLines.push(`Date: ${new Date().toLocaleString()}`);
+
+    if (params.accountHolder) {
+      renderer.line(`Holder: ${params.accountHolder}`);
+      textLines.push(`Holder: ${params.accountHolder}`);
+    }
+    if (params.phoneAccount) {
+      renderer.line(`Account/Phone: ${params.phoneAccount}`);
+      textLines.push(`Account/Phone: ${params.phoneAccount}`);
+    }
+
+    renderer.separator('=', width);
+    textLines.push('='.repeat(width));
+
+    if (params.qrRaster) {
+      renderer.feed(1);
+      renderer.rasterBitmap(params.qrRaster);
+      textLines.push('[REAL CONFIGURED QR IMAGE]');
+      renderer.feed(1);
+    }
+
+    renderer.align('center');
+    renderer.line('Scan with your payment app');
+    renderer.line('to verify test readability.');
+    textLines.push('Scan with your payment app to verify test readability.');
+
+    renderer.separator('=', width);
+    textLines.push('='.repeat(width));
+    renderer.feed(3).cut(false);
 
     return {
       bytes: renderer.toBytes(),

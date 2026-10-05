@@ -255,14 +255,29 @@ export const MenuScannerView: React.FC = () => {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden select-none">
-      {/* Hidden File Input */}
+      {/* Global File Inputs (Multi-image/PDF & Direct Camera capture fallback) */}
       <input
         ref={fileInputRef}
+        id="menu-global-file-input"
         type="file"
         multiple
         accept="image/*,application/pdf"
         className="hidden"
-        onChange={e => handleFilesSelected(e.target.files)}
+        onChange={e => {
+          handleFilesSelected(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <input
+        id="menu-direct-camera-input"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={e => {
+          handleFilesSelected(e.target.files);
+          e.target.value = '';
+        }}
       />
 
       {/* Camera Capture Modal */}
@@ -328,14 +343,13 @@ export const MenuScannerView: React.FC = () => {
                   Capture with Camera
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                <label
+                  htmlFor="menu-global-file-input"
                   className="px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white font-semibold text-sm border border-white/20 flex items-center gap-2.5 transition-all cursor-pointer backdrop-blur-xs"
                 >
                   <Upload className="w-5 h-5" />
                   Upload Images or PDF
-                </button>
+                </label>
               </div>
             </div>
           </div>

@@ -47,19 +47,19 @@ export const PageManager: React.FC<PageManagerProps> = ({
           <button
             type="button"
             onClick={onOpenLiveCamera}
-            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1.5 shadow-xs transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <Camera className="w-3.5 h-3.5" />
             Camera
           </button>
-          <button
-            type="button"
+          <label
+            htmlFor="menu-global-file-input"
             onClick={onTriggerFileUpload}
-            className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium flex items-center gap-1.5 border border-slate-300 transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium flex items-center gap-1.5 border border-slate-300 transition-colors cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
             Upload File
-          </button>
+          </label>
         </div>
       </div>
 
@@ -76,19 +76,19 @@ export const PageManager: React.FC<PageManagerProps> = ({
             <button
               type="button"
               onClick={onOpenLiveCamera}
-              className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium flex items-center gap-2 shadow-sm transition-all"
+              className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium flex items-center gap-2 shadow-sm transition-all cursor-pointer"
             >
               <Camera className="w-4 h-4" />
               Open Camera
             </button>
-            <button
-              type="button"
+            <label
+              htmlFor="menu-global-file-input"
               onClick={onTriggerFileUpload}
-              className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-sm font-medium border border-slate-300 shadow-xs transition-all flex items-center gap-2"
+              className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-sm font-medium border border-slate-300 shadow-xs transition-all flex items-center gap-2 cursor-pointer"
             >
               <Upload className="w-4 h-4" />
               Upload Photos / PDF
-            </button>
+            </label>
           </div>
         </div>
       ) : (
@@ -174,19 +174,19 @@ export const PageManager: React.FC<PageManagerProps> = ({
               <button
                 type="button"
                 onClick={onOpenLiveCamera}
-                className="p-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-700 text-xs font-medium transition-colors"
+                className="p-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-700 text-xs font-medium transition-colors cursor-pointer"
                 title="Use Camera"
               >
                 <Camera className="w-3.5 h-3.5" />
               </button>
-              <button
-                type="button"
+              <label
+                htmlFor="menu-global-file-input"
                 onClick={onTriggerFileUpload}
-                className="p-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium transition-colors"
+                className="p-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium transition-colors cursor-pointer"
                 title="Upload Photo"
               >
                 <Upload className="w-3.5 h-3.5" />
-              </button>
+              </label>
             </div>
           </div>
         </div>

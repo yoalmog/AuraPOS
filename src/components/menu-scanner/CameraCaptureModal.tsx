@@ -220,14 +220,51 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               <AlertCircle className="w-12 h-12 text-amber-400 mx-auto mb-3" />
               <h4 className="text-lg font-semibold text-white mb-2">Camera Unavailable</h4>
               <p className="text-sm text-slate-300 mb-6 leading-relaxed">{cameraError}</p>
-              <button
-                type="button"
-                onClick={() => startCamera(facingMode)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Retry Camera
-              </button>
+              
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => startCamera(facingMode)}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Retry Camera
+                </button>
+
+                <label className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer">
+                  <Camera className="w-4 h-4 text-blue-400" />
+                  Upload Photo / File
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      const files = e.target.files;
+                      if (!files || files.length === 0) return;
+                      Array.from(files).forEach((file, idx) => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          if (typeof reader.result === 'string') {
+                            const newPage: ScannedMenuPage = {
+                              id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
+                              name: file.name || `Page ${existingPagesCount + capturedPages.length + idx + 1}`,
+                              dataUrl: reader.result,
+                              mimeType: file.type || 'image/jpeg',
+                              rotation: 0,
+                              timestamp: new Date().toISOString(),
+                              fileSize: file.size
+                            };
+                            setCapturedPages(prev => [...prev, newPage]);
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      });
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
             </div>
           ) : (
             <>
