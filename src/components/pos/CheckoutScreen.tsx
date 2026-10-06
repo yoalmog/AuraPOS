@@ -19,7 +19,8 @@ import {
   ShieldCheck,
   Check,
   Eye,
-  Receipt
+  Receipt,
+  QrCode
 } from 'lucide-react';
 import { PaymentMethod, PaymentRecord, Sale } from '../../types/pos.ts';
 
@@ -51,6 +52,7 @@ export const CheckoutScreen: React.FC = () => {
   const [cardStatusText, setCardStatusText] = useState<string>('Ready for Tap, Chip, or Swipe');
   const [activeCompletedSale, setActiveCompletedSale] = useState<Sale | null>(null);
   const [isPreviewReceiptOpen, setIsPreviewReceiptOpen] = useState<boolean>(false);
+  const [checkoutTxnId] = useState<string>(() => `TXN-${Date.now().toString().slice(-6)}`);
 
   // Sync tendered amount when grandTotal changes
   useEffect(() => {
@@ -73,7 +75,7 @@ export const CheckoutScreen: React.FC = () => {
 
   // Memoized draft sale representing current checkout state for receipt preview
   const draftReceiptSale = useMemo<Sale>(() => {
-    const draftId = `draft_${Date.now()}`;
+    const draftId = checkoutTxnId;
     const nowIso = new Date().toISOString();
     return {
       id: draftId,
@@ -347,10 +349,11 @@ export const CheckoutScreen: React.FC = () => {
                   type="button"
                   onClick={() => setIsPreviewReceiptOpen(true)}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors cursor-pointer"
-                  title="Preview receipt before printing"
+                  title="Preview receipt formatting, QR code, and fields"
                 >
                   <Eye className="w-3.5 h-3.5" />
                   <span>Preview Receipt</span>
+                  <QrCode className="w-3 h-3 text-blue-500 opacity-80" />
                 </button>
                 <span className="font-mono text-xs font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
                   #{settings.receiptPrefix}{settings.nextReceiptNumber}

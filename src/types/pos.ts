@@ -397,6 +397,14 @@ export interface StoreSettings {
   showCustomer: boolean;
   showBarcode: boolean;
   showLoyalty: boolean;
+  showTaxBreakdown?: boolean;
+  showLoyaltyPoints?: boolean;
+  showStoreLogo?: boolean;
+  showReturnPolicy?: boolean;
+  returnPolicyText?: string;
+  showReceiptQrCode?: boolean;
+  receiptQrType?: 'digital_receipt' | 'feedback_survey' | 'both';
+  feedbackSurveyUrl?: string;
   receiptPrefix: string;
   nextReceiptNumber: number;
   pointsPerDollar: number;

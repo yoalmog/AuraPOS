@@ -375,7 +375,7 @@ export const en = {
   'settings.appearance': 'Appearance & Theme',
   'settings.brandingTheme': 'Branding & Theme',
   'settings.printers': 'Printers & Hardware',
-  'settings.receipt': 'Thermal Receipt',
+  'settings.receipt': 'Receipt Configuration',
   'settings.loyalty': 'Loyalty Program',
   'settings.data': 'Offline & Storage',
   'settings.general': 'General Settings',

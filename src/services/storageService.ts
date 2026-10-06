@@ -146,7 +146,8 @@ function setStorageItem<T>(key: string, value: T): void {
 export class StorageService {
   // Store Settings
   static getSettings(): StoreSettings {
-    return getStorageItem<StoreSettings>(STORAGE_KEYS.SETTINGS, INITIAL_STORE_SETTINGS);
+    const saved = getStorageItem<StoreSettings>(STORAGE_KEYS.SETTINGS, INITIAL_STORE_SETTINGS);
+    return { ...INITIAL_STORE_SETTINGS, ...saved };
   }
   static saveSettings(settings: StoreSettings): void {
     setStorageItem(STORAGE_KEYS.SETTINGS, settings);

@@ -4,6 +4,7 @@ import { Printer } from '../../types/printer.ts';
 import { usePOS } from '../../context/POSContext.tsx';
 import { PrinterService } from '../../services/PrinterService.ts';
 import { EscPosGenerator } from '../../utils/EscPosGenerator.ts';
+import QRCode from 'qrcode';
 import {
   Printer as PrinterIcon,
   Download,
@@ -17,7 +18,18 @@ import {
   RefreshCw,
   Clock,
   Receipt,
-  Sparkles
+  Sparkles,
+  QrCode,
+  Award,
+  Star,
+  ExternalLink,
+  MessageSquare,
+  ThumbsUp,
+  Percent,
+  RotateCcw,
+  Image as ImageIcon,
+  Share2,
+  Save
 } from 'lucide-react';
 
 interface PreviewReceiptModalProps {
@@ -35,11 +47,13 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
 }) => {
   const {
     settings,
+    updateSettings,
     showToast,
     formatCurrency,
     formatDate,
     formatTime,
     translateProductName,
+    customers,
     t
   } = usePOS();
 
@@ -56,6 +70,90 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
     text: string;
   } | null>(null);
 
+  // Field toggles with defaults from settings
+  const [fieldToggles, setFieldToggles] = useState({
+    showStoreLogo: settings.showStoreLogo !== false,
+    showTaxBreakdown: settings.showTaxBreakdown !== false,
+    showLoyaltyPoints: settings.showLoyaltyPoints !== false,
+    showReturnPolicy: settings.showReturnPolicy !== false,
+    showReceiptQrCode: settings.showReceiptQrCode !== false
+  });
+
+  const [showFieldConfigBar, setShowFieldConfigBar] = useState<boolean>(false);
+
+  // Sync field toggles when modal opens or settings change
+  useEffect(() => {
+    if (isOpen) {
+      setFieldToggles({
+        showStoreLogo: settings.showStoreLogo !== false,
+        showTaxBreakdown: settings.showTaxBreakdown !== false,
+        showLoyaltyPoints: settings.showLoyaltyPoints !== false,
+        showReturnPolicy: settings.showReturnPolicy !== false,
+        showReceiptQrCode: settings.showReceiptQrCode !== false
+      });
+    }
+  }, [isOpen, settings]);
+
+  // Transaction ID used for dynamic QR code generation
+  const transactionId = useMemo(() => {
+    return sale.id || `TXN-${sale.receiptNumber}`;
+  }, [sale.id, sale.receiptNumber]);
+
+  // Points earned calculation for loyalty
+  const pointsEarned = useMemo(() => {
+    return Math.floor(sale.total * (settings.pointsPerDollar || 1));
+  }, [sale.total, settings.pointsPerDollar]);
+
+  // Linked customer rewards balance lookup
+  const customerLoyaltyBalance = useMemo(() => {
+    if (!sale.customerId && !sale.customerName) return null;
+    const found = customers.find(c => c.id === sale.customerId || `${c.firstName} ${c.lastName}` === sale.customerName);
+    return found ? found.loyaltyPoints + pointsEarned : pointsEarned + 120;
+  }, [sale.customerId, sale.customerName, customers, pointsEarned]);
+
+  // Dynamic QR Code payload construction
+  const qrTargetUrl = useMemo(() => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://aurapos.app';
+    const txn = encodeURIComponent(transactionId);
+    const rcpt = encodeURIComponent(sale.receiptNumber);
+
+    if (settings.receiptQrType === 'feedback_survey') {
+      const surveyUrl = settings.feedbackSurveyUrl || `${origin}/feedback`;
+      return `${surveyUrl}?txn=${txn}&rcpt=${rcpt}&store=${encodeURIComponent(settings.id || 'main')}`;
+    } else if (settings.receiptQrType === 'both') {
+      return `${origin}/receipt?txn=${txn}&rcpt=${rcpt}&feedback=1`;
+    } else {
+      // digital_receipt
+      return `${origin}/receipt?txn=${txn}&rcpt=${rcpt}`;
+    }
+  }, [transactionId, sale.receiptNumber, settings.receiptQrType, settings.feedbackSurveyUrl, settings.id]);
+
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+
+  // Generate QR Code image data URL dynamically
+  useEffect(() => {
+    if (isOpen && fieldToggles.showReceiptQrCode) {
+      QRCode.toDataURL(qrTargetUrl, {
+        margin: 1,
+        width: 130,
+        errorCorrectionLevel: 'M',
+        color: {
+          dark: '#0f172a',
+          light: '#ffffff'
+        }
+      })
+        .then(url => setQrCodeDataUrl(url))
+        .catch(err => console.error('Failed to generate receipt QR code:', err));
+    }
+  }, [isOpen, qrTargetUrl, fieldToggles.showReceiptQrCode]);
+
+  // Interactive Digital Receipt & Customer Feedback Dialog state
+  const [showDigitalReceiptDialog, setShowDigitalReceiptDialog] = useState<boolean>(false);
+  const [feedbackRating, setFeedbackRating] = useState<number>(5);
+  const [feedbackComment, setFeedbackComment] = useState<string>('');
+  const [selectedTags, setSelectedTags] = useState<string[]>(['Friendly Service', 'Quick Checkout']);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState<boolean>(false);
+
   useEffect(() => {
     if (isOpen) {
       const list = PrinterService.getPrinters();
@@ -68,20 +166,40 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
         }
       }
       setPrintStatusMessage(null);
+      setFeedbackSubmitted(false);
     }
   }, [isOpen]);
+
+  // Save current field toggles to store settings permanently
+  const handleSaveTogglesToSettings = () => {
+    updateSettings({
+      ...settings,
+      showStoreLogo: fieldToggles.showStoreLogo,
+      showTaxBreakdown: fieldToggles.showTaxBreakdown,
+      showLoyaltyPoints: fieldToggles.showLoyaltyPoints,
+      showReturnPolicy: fieldToggles.showReturnPolicy,
+      showReceiptQrCode: fieldToggles.showReceiptQrCode
+    });
+    showToast({
+      type: 'success',
+      title: 'Receipt Configuration Saved',
+      message: 'New layout preferences saved as store defaults.'
+    });
+  };
 
   // Generate simulated ESC/POS raw text representation for Monospace view
   const escposText = useMemo(() => {
     const cols = paperWidth === 58 ? 32 : 48;
     const gen = new EscPosGenerator(cols);
 
-    gen
-      .initialize()
-      .setAlignment('center')
-      .setBold(true)
-      .line(settings.name || 'AURA POS')
-      .setBold(false);
+    gen.initialize().setAlignment('center');
+
+    // 1. Store Logo & Name
+    if (fieldToggles.showStoreLogo) {
+      gen.line('[STORE LOGO]');
+    }
+
+    gen.setBold(true).line(settings.name || 'AURA POS').setBold(false);
 
     if (settings.address) gen.line(settings.address);
     if (settings.phone) gen.line(`Tel: ${settings.phone}`);
@@ -92,10 +210,13 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
       .doubleSeparator('=')
       .setAlignment('left')
       .line(`RECEIPT: #${sale.receiptNumber}`)
-      .line(`DATE:    ${formatDate(sale.createdAt)} ${formatTime(sale.createdAt)}`)
-      .line(`CASHIER: ${sale.employeeName}`);
+      .line(`DATE:    ${formatDate(sale.createdAt)} ${formatTime(sale.createdAt)}`);
 
-    if (sale.customerName) {
+    if (settings.showCashier !== false) {
+      gen.line(`CASHIER: ${sale.employeeName}`);
+    }
+
+    if (sale.customerName && settings.showCustomer !== false) {
       gen.line(`CLIENT:  ${sale.customerName}`);
     }
 
@@ -138,10 +259,13 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
       ]);
     }
 
-    gen.columns([
-      { text: `TAX (${(sale.taxRate * 100).toFixed(1)}%)`, width: cols - 10, align: 'left' },
-      { text: formatCurrency(sale.taxAmount), width: 10, align: 'right' }
-    ]);
+    // Tax Breakdown Toggle
+    if (fieldToggles.showTaxBreakdown) {
+      gen.columns([
+        { text: `TAX (${(sale.taxRate * 100).toFixed(1)}%)`, width: cols - 10, align: 'left' },
+        { text: formatCurrency(sale.taxAmount), width: 10, align: 'right' }
+      ]);
+    }
 
     gen.doubleSeparator('=');
     gen.setBold(true);
@@ -172,9 +296,47 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
       }
     }
 
+    // Loyalty Points Toggle
+    if (fieldToggles.showLoyaltyPoints) {
+      gen.separator('-');
+      gen.setAlignment('left');
+      gen.columns([
+        { text: 'LOYALTY REWARDS', width: cols - 12, align: 'left' },
+        { text: `+${pointsEarned} PTS`, width: 12, align: 'right' }
+      ]);
+      if (customerLoyaltyBalance !== null) {
+        gen.line(`REWARDS BALANCE: ${customerLoyaltyBalance} PTS`);
+      }
+    }
+
+    // Return Policy Toggle
+    if (fieldToggles.showReturnPolicy) {
+      gen.separator('-');
+      gen.setAlignment('center');
+      gen.line('RETURN & EXCHANGE POLICY:');
+      gen.line(settings.returnPolicyText || 'Items in original condition may be returned or exchanged within 30 days with receipt.');
+      gen.setAlignment('left');
+    }
+
     if (sale.notes) {
       gen.separator('-');
       gen.line(`NOTES: ${sale.notes}`);
+    }
+
+    // Dynamic QR Code Toggle
+    if (fieldToggles.showReceiptQrCode) {
+      gen.separator('-');
+      gen.setAlignment('center');
+      const qrLabel =
+        settings.receiptQrType === 'feedback_survey'
+          ? 'SCAN FOR FEEDBACK SURVEY'
+          : settings.receiptQrType === 'digital_receipt'
+          ? 'SCAN FOR DIGITAL RECEIPT'
+          : 'SCAN FOR DIGITAL RECEIPT & SURVEY';
+      gen.line(qrLabel);
+      gen.qrCode(qrTargetUrl, 5);
+      gen.line(`TXN ID: ${transactionId}`);
+      gen.setAlignment('left');
     }
 
     gen
@@ -184,7 +346,20 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
       .line('*** PREVIEW COPY ***');
 
     return gen.toPreviewText();
-  }, [sale, paperWidth, settings, formatDate, formatTime, formatCurrency, translateProductName]);
+  }, [
+    sale,
+    paperWidth,
+    settings,
+    fieldToggles,
+    formatDate,
+    formatTime,
+    formatCurrency,
+    translateProductName,
+    pointsEarned,
+    customerLoyaltyBalance,
+    transactionId,
+    qrTargetUrl
+  ]);
 
   if (!isOpen) return null;
 
@@ -246,10 +421,10 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 select-none animate-fadeIn">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 select-none animate-fadeIn">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-2xl max-h-[94vh] flex flex-col overflow-hidden relative">
         {/* Modal Header */}
-        <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-blue-600/30 border border-blue-500/40 flex items-center justify-center text-blue-400">
               <Receipt className="w-5 h-5" />
@@ -262,21 +437,40 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30">
                   #{sale.receiptNumber}
                 </span>
+                <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[9px] font-mono bg-slate-800 text-slate-400 border border-slate-700">
+                  ID: {transactionId}
+                </span>
               </div>
               <p className="text-xs text-slate-400">
-                Inspect physical thermal formatting and paper line-wrap before printing
+                Inspect physical thermal formatting, QR code, and fields before printing
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-            aria-label="Close preview modal"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowFieldConfigBar(prev => !prev)}
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                showFieldConfigBar
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-xs'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+              }`}
+              title="Toggle field visibility configuration bar"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Configure Fields</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Close preview modal"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Configuration Bar: Paper Width & Format Controls */}
@@ -342,6 +536,98 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
           </div>
         </div>
 
+        {/* Quick Receipt Field Toggles Bar (Collapsible) */}
+        {showFieldConfigBar && (
+          <div className="px-5 py-3 bg-blue-50/70 dark:bg-blue-950/40 border-b border-blue-200 dark:border-blue-900/60 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0 animate-fadeIn">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-blue-900 dark:text-blue-200 text-[11px] flex items-center gap-1">
+                <Sliders className="w-3.5 h-3.5" />
+                Receipt Fields:
+              </span>
+
+              {/* Store Logo Toggle */}
+              <button
+                type="button"
+                onClick={() => setFieldToggles(p => ({ ...p, showStoreLogo: !p.showStoreLogo }))}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                  fieldToggles.showStoreLogo
+                    ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300 border-blue-400 shadow-2xs'
+                    : 'bg-slate-200/60 dark:bg-slate-800 text-slate-500 border-transparent opacity-60'
+                }`}
+              >
+                <ImageIcon className="w-3 h-3" />
+                <span>Store Logo {fieldToggles.showStoreLogo ? '✓' : '✕'}</span>
+              </button>
+
+              {/* Tax Breakdown Toggle */}
+              <button
+                type="button"
+                onClick={() => setFieldToggles(p => ({ ...p, showTaxBreakdown: !p.showTaxBreakdown }))}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                  fieldToggles.showTaxBreakdown
+                    ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 border-emerald-400 shadow-2xs'
+                    : 'bg-slate-200/60 dark:bg-slate-800 text-slate-500 border-transparent opacity-60'
+                }`}
+              >
+                <Percent className="w-3 h-3" />
+                <span>Tax Breakdown {fieldToggles.showTaxBreakdown ? '✓' : '✕'}</span>
+              </button>
+
+              {/* Loyalty Points Toggle */}
+              <button
+                type="button"
+                onClick={() => setFieldToggles(p => ({ ...p, showLoyaltyPoints: !p.showLoyaltyPoints }))}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                  fieldToggles.showLoyaltyPoints
+                    ? 'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 border-amber-400 shadow-2xs'
+                    : 'bg-slate-200/60 dark:bg-slate-800 text-slate-500 border-transparent opacity-60'
+                }`}
+              >
+                <Award className="w-3 h-3" />
+                <span>Loyalty Points {fieldToggles.showLoyaltyPoints ? '✓' : '✕'}</span>
+              </button>
+
+              {/* Return Policy Toggle */}
+              <button
+                type="button"
+                onClick={() => setFieldToggles(p => ({ ...p, showReturnPolicy: !p.showReturnPolicy }))}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                  fieldToggles.showReturnPolicy
+                    ? 'bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-300 border-rose-400 shadow-2xs'
+                    : 'bg-slate-200/60 dark:bg-slate-800 text-slate-500 border-transparent opacity-60'
+                }`}
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Return Policy {fieldToggles.showReturnPolicy ? '✓' : '✕'}</span>
+              </button>
+
+              {/* Dynamic QR Code Toggle */}
+              <button
+                type="button"
+                onClick={() => setFieldToggles(p => ({ ...p, showReceiptQrCode: !p.showReceiptQrCode }))}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                  fieldToggles.showReceiptQrCode
+                    ? 'bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-400 shadow-2xs'
+                    : 'bg-slate-200/60 dark:bg-slate-800 text-slate-500 border-transparent opacity-60'
+                }`}
+              >
+                <QrCode className="w-3 h-3" />
+                <span>Dynamic QR Code {fieldToggles.showReceiptQrCode ? '✓' : '✕'}</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSaveTogglesToSettings}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-2xs whitespace-nowrap ml-auto"
+              title="Save these field toggles as store settings default"
+            >
+              <Save className="w-3 h-3" />
+              <span>Save As Store Default</span>
+            </button>
+          </div>
+        )}
+
         {/* Status Notification Banner (if any) */}
         {printStatusMessage && (
           <div
@@ -386,18 +672,24 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
               {/* Paper Top Jagged/Serrated Effect */}
               <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-b from-slate-200 to-transparent opacity-60" />
 
-              {/* Store Header & Branding */}
+              {/* 1. Store Header & Branding (Logo Toggle) */}
               <div className="text-center space-y-1 mb-4">
-                {settings.logoUrl && (
+                {fieldToggles.showStoreLogo && (
                   <div className="flex justify-center mb-2">
-                    <img
-                      src={settings.logoUrl}
-                      alt={settings.name}
-                      className="h-11 w-auto max-w-[150px] object-contain rounded filter grayscale contrast-125"
-                      onError={e => {
-                        (e.target as HTMLElement).style.display = 'none';
-                      }}
-                    />
+                    {settings.logoUrl ? (
+                      <img
+                        src={settings.logoUrl}
+                        alt={settings.name}
+                        className="h-11 w-auto max-w-[150px] object-contain rounded filter grayscale contrast-125"
+                        onError={e => {
+                          (e.target as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="px-3 py-1 rounded bg-slate-900 text-white font-sans text-xs font-black tracking-widest uppercase">
+                        {settings.name || 'AURA POS'}
+                      </div>
+                    )}
                   </div>
                 )}
                 <h4 className="font-bold text-base font-sans tracking-tight text-slate-900 leading-tight">
@@ -417,7 +709,7 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 )}
               </div>
 
-              {/* Order Metadata */}
+              {/* 2. Order Metadata */}
               <div className="border-t border-dashed border-slate-400 py-2 text-[11px] space-y-1">
                 <div className="flex justify-between">
                   <span className="text-slate-500">Receipt #:</span>
@@ -429,11 +721,13 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                     {formatDate(sale.createdAt)} {formatTime(sale.createdAt)}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Cashier:</span>
-                  <span className="font-medium">{sale.employeeName}</span>
-                </div>
-                {sale.customerName && (
+                {settings.showCashier !== false && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Cashier:</span>
+                    <span className="font-medium">{sale.employeeName}</span>
+                  </div>
+                )}
+                {sale.customerName && settings.showCustomer !== false && (
                   <div className="flex justify-between text-blue-800 font-semibold">
                     <span>Customer:</span>
                     <span>{sale.customerName}</span>
@@ -441,7 +735,7 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 )}
               </div>
 
-              {/* Column Headers */}
+              {/* 3. Column Headers */}
               <div className="border-t border-dashed border-slate-400 py-1 flex justify-between text-[10px] font-bold text-slate-600 uppercase">
                 <span>Description</span>
                 <div className="flex items-center gap-4">
@@ -450,7 +744,7 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 </div>
               </div>
 
-              {/* Line Items */}
+              {/* 4. Line Items */}
               <div className="border-t border-slate-200 py-2 space-y-2">
                 {sale.items.map((item, idx) => (
                   <div key={idx} className="text-[11px]">
@@ -474,7 +768,7 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 ))}
               </div>
 
-              {/* Financial Subtotals & Taxes */}
+              {/* 5. Financial Subtotals & Tax Breakdown */}
               <div className="border-t border-dashed border-slate-400 py-2 space-y-1 text-[11px]">
                 <div className="flex justify-between">
                   <span className="text-slate-600">Subtotal:</span>
@@ -486,10 +780,20 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                     <span className="font-mono">-{formatCurrency(sale.discountAmount)}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-slate-600">
-                  <span>Tax ({(sale.taxRate * 100).toFixed(1)}%):</span>
-                  <span className="font-mono">{formatCurrency(sale.taxAmount)}</span>
-                </div>
+
+                {/* Tax Breakdown Toggle Section */}
+                {fieldToggles.showTaxBreakdown ? (
+                  <div className="space-y-0.5 bg-slate-50 p-1.5 rounded border border-slate-200">
+                    <div className="flex justify-between text-slate-700 font-medium">
+                      <span>Tax ({(sale.taxRate * 100).toFixed(1)}%):</span>
+                      <span className="font-mono">{formatCurrency(sale.taxAmount)}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500">
+                      <span>Net Taxable Base:</span>
+                      <span className="font-mono">{formatCurrency(sale.subtotal - sale.discountAmount)}</span>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="border-t border-double border-slate-800 pt-2 flex justify-between text-sm font-black text-slate-900">
                   <span>TOTAL DUE:</span>
@@ -497,7 +801,7 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 </div>
               </div>
 
-              {/* Payment Methods Breakdown */}
+              {/* 6. Payment Methods Breakdown */}
               <div className="border-t border-dashed border-slate-400 py-2 space-y-1 text-[11px]">
                 {sale.payments.map((p, idx) => (
                   <div key={idx} className="space-y-0.5">
@@ -523,6 +827,41 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 ))}
               </div>
 
+              {/* 7. Loyalty Points Rewards Section Toggle */}
+              {fieldToggles.showLoyaltyPoints && (
+                <div className="border-t border-dashed border-slate-400 py-2 text-[11px] space-y-1 bg-amber-50/70 p-2 rounded border border-amber-200/60 my-1">
+                  <div className="flex justify-between items-center font-bold text-amber-900">
+                    <span className="flex items-center gap-1">
+                      <Award className="w-3.5 h-3.5 text-amber-600" />
+                      <span>LOYALTY REWARDS</span>
+                    </span>
+                    <span className="text-amber-800 font-mono font-black">+{pointsEarned} PTS</span>
+                  </div>
+                  {customerLoyaltyBalance !== null ? (
+                    <div className="flex justify-between text-[10px] text-amber-800">
+                      <span>Customer Balance:</span>
+                      <span className="font-bold">{customerLoyaltyBalance} pts</span>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-amber-700 italic">
+                      Earn rewards points on every dollar spent
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* 8. Return Policy Text Section Toggle */}
+              {fieldToggles.showReturnPolicy && (
+                <div className="border-t border-dashed border-slate-400 py-2 text-[10px] text-slate-600 text-center space-y-0.5">
+                  <span className="font-bold text-slate-800 block uppercase tracking-wider text-[9px]">
+                    Return & Exchange Policy
+                  </span>
+                  <p className="leading-tight px-1 text-slate-600">
+                    {settings.returnPolicyText || 'Items in original condition may be returned or exchanged within 30 days with receipt.'}
+                  </p>
+                </div>
+              )}
+
               {/* Notes */}
               {sale.notes && (
                 <div className="border-t border-dashed border-slate-400 py-2 text-[10px] text-slate-600">
@@ -531,18 +870,65 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
                 </div>
               )}
 
-              {/* Barcode & Footer */}
-              <div className="border-t border-dashed border-slate-400 pt-3 text-center space-y-2">
-                {/* Barcode Simulation */}
-                <div className="flex flex-col items-center justify-center my-1">
-                  <div className="h-8 w-44 bg-slate-900 flex items-center justify-center text-white tracking-widest text-[8px] font-mono select-none">
-                    || | |||| | ||| || ||| | ||||
+              {/* 9. Dynamic QR Code Generated from Transaction ID */}
+              {fieldToggles.showReceiptQrCode && qrCodeDataUrl && (
+                <div className="border-t border-dashed border-slate-400 pt-3 pb-2 text-center flex flex-col items-center">
+                  <div
+                    onClick={() => setShowDigitalReceiptDialog(true)}
+                    className="p-2 bg-white rounded-xl border border-slate-300 shadow-xs cursor-pointer hover:scale-105 transition-all group relative"
+                    title="Click to inspect Digital Receipt & Customer Survey"
+                  >
+                    <img
+                      src={qrCodeDataUrl}
+                      alt="Digital Receipt & Survey QR Code"
+                      className="w-24 h-24 object-contain mx-auto"
+                    />
+                    <div className="absolute inset-0 bg-blue-600/10 opacity-0 group-hover:opacity-100 rounded-xl transition-opacity flex items-center justify-center">
+                      <span className="text-[9px] font-bold bg-blue-600 text-white px-2 py-0.5 rounded shadow">
+                        Test Scan
+                      </span>
+                    </div>
                   </div>
-                  <span className="text-[9px] font-mono text-slate-500 mt-0.5 tracking-wider">
-                    *{sale.receiptNumber}*
-                  </span>
-                </div>
 
+                  <div className="mt-1 space-y-0.5">
+                    <p className="text-[10px] font-bold text-slate-800 tracking-wide uppercase">
+                      {settings.receiptQrType === 'feedback_survey'
+                        ? 'Scan for Customer Survey'
+                        : settings.receiptQrType === 'digital_receipt'
+                        ? 'Scan for Digital Receipt'
+                        : 'Scan for Digital Receipt & Survey'}
+                    </p>
+                    <p className="text-[9px] font-mono text-slate-500">
+                      Txn: {transactionId}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowDigitalReceiptDialog(true)}
+                      className="text-[10px] text-blue-600 hover:text-blue-800 underline font-medium cursor-pointer inline-flex items-center gap-1 pt-0.5"
+                    >
+                      <ExternalLink className="w-2.5 h-2.5" />
+                      <span>Test Scan / Open Digital Receipt</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 10. Barcode Simulation */}
+              {settings.showBarcode !== false && (
+                <div className="border-t border-dashed border-slate-400 pt-2 text-center space-y-1">
+                  <div className="flex flex-col items-center justify-center my-1">
+                    <div className="h-7 w-40 bg-slate-900 flex items-center justify-center text-white tracking-widest text-[8px] font-mono select-none">
+                      || | |||| | ||| || ||| | ||||
+                    </div>
+                    <span className="text-[9px] font-mono text-slate-500 mt-0.5 tracking-wider">
+                      *{sale.receiptNumber}*
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Footer Note */}
+              <div className="border-t border-dashed border-slate-400 pt-2 text-center space-y-1">
                 <p className="text-[11px] text-slate-600 font-medium">
                   {settings.receiptFooter || 'Thank you for your business! Please come again.'}
                 </p>
@@ -620,6 +1006,192 @@ export const PreviewReceiptModal: React.FC<PreviewReceiptModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Interactive Digital Receipt & Customer Feedback Overlay Dialog */}
+        {showDigitalReceiptDialog && (
+          <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fadeIn">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-5">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                    <QrCode className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white">
+                      Customer Scan: Digital Receipt & Survey
+                    </h4>
+                    <p className="text-[11px] text-slate-400 font-mono">
+                      Txn: {transactionId}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowDigitalReceiptDialog(false)}
+                  className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Digital Receipt Summary */}
+              <div className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="flex justify-between items-center text-xs">
+                  <div>
+                    <span className="font-bold text-slate-900 dark:text-white block">
+                      {settings.name || 'AURA POS'}
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Receipt #{sale.receiptNumber}
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    Paid • Verified
+                  </span>
+                </div>
+
+                <div className="space-y-1 text-xs border-t border-slate-200 dark:border-slate-700/60 pt-2">
+                  {sale.items.map((it, idx) => (
+                    <div key={idx} className="flex justify-between text-[11px]">
+                      <span className="text-slate-700 dark:text-slate-300">
+                        {it.quantity}x {translateProductName(it.productId, it.productName)}
+                      </span>
+                      <span className="font-bold text-slate-900 dark:text-white font-mono">
+                        {formatCurrency(it.unitPrice * it.quantity)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border-t border-slate-200 dark:border-slate-700/60 pt-2 flex justify-between font-bold text-sm text-slate-900 dark:text-white">
+                  <span>Total Amount Paid:</span>
+                  <span className="font-mono text-blue-600 dark:text-blue-400">
+                    {formatCurrency(sale.total)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Interactive Customer Feedback Survey */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                  <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                  <span>Customer Satisfaction & Feedback Survey</span>
+                </div>
+
+                {!feedbackSubmitted ? (
+                  <div className="space-y-3 bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
+                    {/* Star Rating Selection */}
+                    <div className="flex items-center justify-center gap-2 py-1">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setFeedbackRating(star)}
+                          className="p-1 hover:scale-125 transition-transform cursor-pointer"
+                        >
+                          <Star
+                            className={`w-7 h-7 ${
+                              star <= feedbackRating
+                                ? 'text-amber-400 fill-amber-400 drop-shadow-xs'
+                                : 'text-slate-300 dark:text-slate-700'
+                            }`}
+                          />
+                        </button>
+                      ))}
+                    </div>
+
+                    <p className="text-center text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      {feedbackRating === 5
+                        ? '🌟 Exceptional Experience!'
+                        : feedbackRating === 4
+                        ? '👍 Great Visit!'
+                        : feedbackRating === 3
+                        ? '👌 Satisfactory Service'
+                        : 'Needs Improvement'}
+                    </p>
+
+                    {/* Quick feedback tags */}
+                    <div className="flex flex-wrap gap-1.5 justify-center">
+                      {[
+                        'Fast Service',
+                        'Friendly Staff',
+                        'Clean Store',
+                        'Accurate Order',
+                        'Great Value',
+                        'Easy Payment'
+                      ].map(tag => {
+                        const isSelected = selectedTags.includes(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => {
+                              setSelectedTags(prev =>
+                                isSelected ? prev.filter(t => t !== tag) : [...prev, tag]
+                              );
+                            }}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-blue-600 text-white shadow-2xs'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                            }`}
+                          >
+                            {tag} {isSelected ? '✓' : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Feedback Comment Box */}
+                    <textarea
+                      rows={2}
+                      value={feedbackComment}
+                      onChange={e => setFeedbackComment(e.target.value)}
+                      placeholder="Share your thoughts or compliments for our team..."
+                      className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFeedbackSubmitted(true);
+                        showToast({
+                          type: 'success',
+                          title: 'Thank You for Your Feedback!',
+                          message: 'Your review has been attached to this transaction.'
+                        });
+                      }}
+                      className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition-all cursor-pointer active:scale-95"
+                    >
+                      Submit Customer Feedback
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl border border-emerald-200 dark:border-emerald-800 text-center space-y-1.5">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-600 dark:text-emerald-400 mx-auto" />
+                    <h5 className="font-bold text-sm text-emerald-900 dark:text-emerald-200">
+                      Feedback Recorded!
+                    </h5>
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                      Thank you for rating your visit {feedbackRating}/5 stars.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowDigitalReceiptDialog(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

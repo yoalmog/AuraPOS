@@ -30,6 +30,7 @@ import { PrinterSettings } from './printers/PrinterSettings.tsx';
 import { AccessibilitySettingsTab } from './accessibility/AccessibilitySettingsTab.tsx';
 import { AppearanceSettingsTab } from './appearance/AppearanceSettingsTab.tsx';
 import { SystemDiagnostics } from './SystemDiagnostics.tsx';
+import { ReceiptConfigTab } from './receipt/ReceiptConfigTab.tsx';
 import { THEME_PRESETS, ThemeColor, applyThemeVariables } from '../../utils/theme.ts';
 import { STORE_LOGO_PRESETS } from '../../utils/productImages.ts';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n/translations.ts';
@@ -175,7 +176,7 @@ export const SettingsView: React.FC = () => {
             { id: 'categories', label: 'Categories', icon: FolderTree, isRoute: true },
             { id: 'printers', label: t('settings.printers', 'Printers & Hardware'), icon: Printer },
             { id: 'diagnostics', label: 'AI Backend Diagnostics', icon: Server },
-            { id: 'receipt', label: t('settings.receipt', 'Receipt Customizer'), icon: Receipt },
+            { id: 'receipt', label: t('settings.receipt', 'Receipt Configuration'), icon: Receipt },
             { id: 'loyalty', label: t('settings.loyalty', 'Loyalty Program Rules'), icon: Award },
             { id: 'data', label: t('settings.data', 'Data & Offline Sync'), icon: Database }
           ].map(tab => {
@@ -214,6 +215,18 @@ export const SettingsView: React.FC = () => {
           <AccessibilitySettingsTab />
         ) : activeTab === 'diagnostics' ? (
           <SystemDiagnostics />
+        ) : activeTab === 'receipt' ? (
+          <form onSubmit={handleSave} className="space-y-6">
+            <ReceiptConfigTab formData={formData} onChange={handleChange} onSave={handleSave} />
+            <div className="flex justify-end pt-4 border-t border-slate-200">
+              <button
+                type="submit"
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
+              >
+                Save Receipt Configuration
+              </button>
+            </div>
+          </form>
         ) : (
           <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
           {activeTab === 'store' && (
@@ -495,76 +508,6 @@ export const SettingsView: React.FC = () => {
                     />
                   </div>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'receipt' && (
-            <div className="space-y-4">
-              <h3 className="text-sm font-bold text-slate-900">Thermal Receipt Layout</h3>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Receipt Number Prefix</label>
-                  <input
-                    type="text"
-                    value={formData.receiptPrefix}
-                    onChange={e => handleChange('receiptPrefix', e.target.value)}
-                    className="w-full text-xs font-mono p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Next Sequential #</label>
-                  <input
-                    type="number"
-                    value={formData.nextReceiptNumber}
-                    onChange={e => handleChange('nextReceiptNumber', parseInt(e.target.value, 10))}
-                    className="w-full text-xs font-mono p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Receipt Header Greeting</label>
-                <input
-                  type="text"
-                  value={formData.receiptHeader}
-                  onChange={e => handleChange('receiptHeader', e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Receipt Footer Note / Policy</label>
-                <textarea
-                  value={formData.receiptFooter}
-                  onChange={e => handleChange('receiptFooter', e.target.value)}
-                  rows={2}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-3 text-xs">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.showCashier}
-                    onChange={e => handleChange('showCashier', e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded border-slate-300"
-                  />
-                  <span className="font-semibold text-slate-700">Display Cashier Name</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.showCustomer}
-                    onChange={e => handleChange('showCustomer', e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded border-slate-300"
-                  />
-                  <span className="font-semibold text-slate-700">Display Customer Name</span>
-                </label>
               </div>
             </div>
           )}
