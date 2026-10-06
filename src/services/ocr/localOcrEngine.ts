@@ -1,13 +1,12 @@
 /**
  * AuraPOS - Unified Local-First On-Device Menu OCR Engine
- * Conforming to Requirements 1, 3, 4, 5, 6, 7, 8, 9, 13, 14:
- * Coordinates the local-first menu scanning workflow:
- * 1. Image Preprocessing (grayscale, contrast boost, normalization, keeping original + OCR copy)
- * 2. On-Device OCR (Google ML Kit on Android, Canvas layout extractor on Web)
- * 3. Spatial 2D Menu Structure & Price Detection
- * 4. Multi-page aggregation and duplicate reconciliation
- *
- * 100% OFFLINE CAPABLE. Zero hard dependency on remote AI or /api/menu/analyze.
+ * Conforming to Requirements 1, 2, 3, 4, 5, 6, 7:
+ * Coordinates the local-first Spanish menu scanning workflow:
+ * 1. Automatic Orientation Check, Content Analysis, Rotation & Deskew
+ * 2. High-Contrast Legibility Enhancement
+ * 3. On-Device Spanish OCR & 2D Spatial Structure Parsing
+ * 4. Strictly separates Menu Scanning from Product Image Creation (NO menu crops)
+ * 5. Reconciles multi-page results and duplicates against existing catalog
  */
 
 import {
@@ -19,12 +18,11 @@ import {
 } from '../../types/menuScanner.ts';
 import { Category, Product } from '../../types/pos.ts';
 import { NativeBridgeService } from '../native/NativeBridgeService.ts';
-import { ImagePreprocessor } from './imagePreprocessor.ts';
+import { ImageOrientationService } from './imageOrientationService.ts';
 import { LocalMenuStructureParser } from './localMenuStructureParser.ts';
-import { PRODUCT_IMAGE_PRESETS } from '../../utils/productImages.ts';
 
 export interface LocalScanProgressUpdate {
-  phase: 'preprocessing' | 'ocr' | 'structure_parsing' | 'reconciling' | 'completed';
+  phase: 'orientation' | 'preprocessing' | 'ocr' | 'structure_parsing' | 'reconciling' | 'completed';
   pageIndex: number;
   totalPages: number;
   message: string;
@@ -32,7 +30,7 @@ export interface LocalScanProgressUpdate {
 
 export class LocalOcrEngine {
   /**
-   * Scans and structures menu pages completely locally on-device.
+   * Scans and structures menu pages with automatic orientation, deskew, and Spanish parsing.
    */
   static async scanPagesLocally(
     pages: ScannedMenuPage[],
@@ -44,13 +42,13 @@ export class LocalOcrEngine {
     updatedPages: ScannedMenuPage[];
   }> {
     if (!pages || pages.length === 0) {
-      throw new Error('No menu pages provided for scanning.');
+      throw new Error('No hay páginas de menú para escanear.');
     }
 
     const allCategoriesMap = new Map<string, ExtractedCategory>();
     const allProducts: ExtractedProduct[] = [];
     const updatedPages: ScannedMenuPage[] = [];
-    let detectedCurrency = '$';
+    let detectedCurrency = 'S/';
     let menuTitle = '';
 
     const isNative = NativeBridgeService.menuScanner.hasNativeScanner();
@@ -60,77 +58,69 @@ export class LocalOcrEngine {
       const page = pages[idx];
 
       // -------------------------------------------------------------
-      // Step 1: Local Image Preprocessing
+      // Step 1: Automatic Image Orientation Detection & Deskew (Requirement 2 & 3)
       // -------------------------------------------------------------
       onProgress?.({
-        phase: 'preprocessing',
+        phase: 'orientation',
         pageIndex: idx,
         totalPages: pages.length,
-        message: `Preprocessing page ${pageNumber} of ${pages.length} (contrast & resolution normalization)...`
+        message: `Detectando orientación y desinclinando página ${pageNumber} de ${pages.length}...`
       });
 
-      let preprocessedOriginalUrl = page.dataUrl;
+      let originalUrl = page.originalDataUrl || page.dataUrl;
+      let correctedUrl = page.correctedDataUrl || page.dataUrl;
       let processedOcrDataUrl = page.processedOcrDataUrl;
+      let appliedRotation = page.rotation || 0;
+      let appliedDeskew = page.deskewAngle || 0;
       let ocrResult: OcrResult | undefined = page.ocrResult;
 
       try {
-        if (!processedOcrDataUrl) {
-          if (isNative) {
-            const prepResult = await NativeBridgeService.menuScanner.preprocessImageLocal(
-              page.dataUrl,
-              page.rotation || 0
-            );
-            if (prepResult.success && prepResult.processedOcrDataUrl) {
-              processedOcrDataUrl = prepResult.processedOcrDataUrl;
-              if (prepResult.originalDataUrl) preprocessedOriginalUrl = prepResult.originalDataUrl;
-            }
-          }
-
-          // Fallback to client-side canvas preprocessor if not native or native failed
-          if (!processedOcrDataUrl) {
-            const clientPrep = await ImagePreprocessor.preprocessForOcr(
-              page.dataUrl,
-              page.rotation || 0
-            );
-            processedOcrDataUrl = clientPrep.processedOcrDataUrl;
-            preprocessedOriginalUrl = clientPrep.originalDataUrl;
-          }
+        // Run full orientation & deskew analysis if not already completed
+        if (!page.correctedDataUrl || page.rotation === undefined) {
+          const orientationAnalysis = await ImageOrientationService.analyzeAndCorrect(
+            originalUrl,
+            page.rotation || 0
+          );
+          correctedUrl = orientationAnalysis.correctedDataUrl;
+          processedOcrDataUrl = orientationAnalysis.processedOcrDataUrl;
+          appliedRotation = orientationAnalysis.detectedRotation;
+          appliedDeskew = orientationAnalysis.deskewAngle;
         }
-      } catch (e) {
-        console.warn(`Preprocessing warning on page ${pageNumber}:`, e);
-        processedOcrDataUrl = page.dataUrl;
+      } catch (orientErr) {
+        console.warn('Orientation check warning, continuing with current image:', orientErr);
       }
 
       // -------------------------------------------------------------
-      // Step 2 & 3: On-Device OCR & Menu Structure Detection
+      // Step 2 & 3: On-Device Spanish OCR & Menu Structure Detection
       // -------------------------------------------------------------
       onProgress?.({
         phase: 'ocr',
         pageIndex: idx,
         totalPages: pages.length,
         message: isNative
-          ? `Running Google ML Kit on-device text recognition on page ${pageNumber}...`
-          : `Running local spatial OCR extraction on page ${pageNumber}...`
+          ? `Ejecutando Google ML Kit OCR en español en página ${pageNumber}...`
+          : `Reconociendo texto del menú en español en página ${pageNumber}...`
       });
 
       let pageCategories: ExtractedCategory[] = [];
       let pageProducts: ExtractedProduct[] = [];
 
       if (isNative) {
-        // Run on Android with Google ML Kit
-        const nativeResult = await NativeBridgeService.menuScanner.recognizeMenuLocal(
-          processedOcrDataUrl || page.dataUrl,
-          pageNumber
-        );
+        try {
+          const nativeResult = await NativeBridgeService.menuScanner.recognizeMenuLocal(
+            processedOcrDataUrl || correctedUrl,
+            pageNumber
+          );
 
-        if (nativeResult.success && nativeResult.products) {
-          pageCategories = (nativeResult.categories || []) as ExtractedCategory[];
-          pageProducts = (nativeResult.products || []) as ExtractedProduct[];
-          if (nativeResult.detectedCurrency) detectedCurrency = nativeResult.detectedCurrency;
-          if (nativeResult.menuTitle) menuTitle = nativeResult.menuTitle;
-          if (nativeResult.ocrResult) ocrResult = nativeResult.ocrResult as OcrResult;
-        } else {
-          console.warn('Native ML Kit OCR fallback to client parser:', nativeResult.error);
+          if (nativeResult.success && nativeResult.products && nativeResult.products.length > 0) {
+            pageCategories = (nativeResult.categories || []) as ExtractedCategory[];
+            pageProducts = (nativeResult.products || []) as ExtractedProduct[];
+            if (nativeResult.detectedCurrency) detectedCurrency = nativeResult.detectedCurrency;
+            if (nativeResult.menuTitle) menuTitle = nativeResult.menuTitle;
+            if (nativeResult.ocrResult) ocrResult = nativeResult.ocrResult as OcrResult;
+          }
+        } catch (nativeErr) {
+          console.warn('Native ML Kit OCR notice, fallback to client parser:', nativeErr);
         }
       }
 
@@ -140,10 +130,9 @@ export class LocalOcrEngine {
           phase: 'structure_parsing',
           pageIndex: idx,
           totalPages: pages.length,
-          message: `Parsing 2D spatial layout and price relationships for page ${pageNumber}...`
+          message: `Analizando estructura del menú, platos y precios en página ${pageNumber}...`
         });
 
-        // Synthesize OCR result or extract from image text regions
         const synthesizedOcr = ocrResult || this.synthesizeOcrFromPage(page, pageNumber);
         ocrResult = synthesizedOcr;
 
@@ -161,27 +150,23 @@ export class LocalOcrEngine {
       }
 
       // -------------------------------------------------------------
-      // Step 4: Associate Product Images & Crop Thumbnails
+      // Step 4: Strict Separation of Menu Scanning & Product Images (Requirement 7)
+      // DO NOT crop food photos or assign menu photographs!
       // -------------------------------------------------------------
       for (const prod of pageProducts) {
         prod.pageIndex = idx;
         prod.sourcePage = pageNumber;
-
-        // Try preset image first
-        const preset = this.findPresetImage(prod.name, prod.categoryName);
-        if (preset) {
-          prod.imageUrl = preset;
-        } else if (prod.sourceBoundingBox && preprocessedOriginalUrl) {
-          // If bounding box exists, generate visual crop from original page
-          try {
-            const crop = await ImagePreprocessor.cropBoundingBox(
-              preprocessedOriginalUrl,
-              prod.sourceBoundingBox
-            );
-            if (crop) {
-              prod.imageUrl = crop;
-            }
-          } catch {}
+        // Check if an existing catalog item with an approved real upload photo matches
+        const existingMatch = existingProducts.find(
+          ep => ep.name.trim().toLowerCase() === prod.normalizedText
+        );
+        if (existingMatch?.imageUrl && existingMatch.imageSource === 'REAL_UPLOAD') {
+          prod.imageUrl = existingMatch.imageUrl;
+          prod.imageSource = 'REAL_UPLOAD';
+        } else {
+          // Clean state awaiting user-requested AI Generation (Requirement 7, 8, 10)
+          prod.imageUrl = '';
+          prod.imageSource = 'NO_IMAGE';
         }
       }
 
@@ -200,8 +185,13 @@ export class LocalOcrEngine {
 
       updatedPages.push({
         ...page,
-        dataUrl: preprocessedOriginalUrl,
+        dataUrl: correctedUrl, // Upright corrected display
+        originalDataUrl: originalUrl, // Original untouched
+        correctedDataUrl: correctedUrl,
         processedOcrDataUrl,
+        rotation: appliedRotation,
+        autoRotationApplied: appliedRotation,
+        deskewAngle: appliedDeskew,
         ocrResult
       });
     }
@@ -213,7 +203,7 @@ export class LocalOcrEngine {
       phase: 'reconciling',
       pageIndex: pages.length - 1,
       totalPages: pages.length,
-      message: 'Reconciling duplicate names against existing catalog...'
+      message: 'Reconciliando productos con el catálogo existente...'
     });
 
     const categoriesArray = Array.from(allCategoriesMap.values());
@@ -229,15 +219,15 @@ export class LocalOcrEngine {
       phase: 'completed',
       pageIndex: pages.length - 1,
       totalPages: pages.length,
-      message: `Extracted ${allProducts.length} items across ${categoriesArray.length} categories on-device.`
+      message: `Se extrajeron ${allProducts.length} productos en ${categoriesArray.length} categorías.`
     });
 
     return {
       scanResult: {
-        menuTitle: menuTitle || (categoriesArray[0]?.name ? `${categoriesArray[0].name} Menu` : 'Scanned Menu'),
+        menuTitle: menuTitle || (categoriesArray[0]?.name ? `${categoriesArray[0].name}` : 'Menú Escaneado'),
         detectedCurrency,
         confidenceScore: allProducts.filter(p => !p.isLowConfidence).length / Math.max(1, allProducts.length),
-        notes: `Processed ${pages.length} pages completely on-device without remote backend.`,
+        notes: `Menú en español procesado en ${pages.length} páginas.`,
         categories: categoriesArray,
         products: allProducts
       },
@@ -245,22 +235,9 @@ export class LocalOcrEngine {
     };
   }
 
-  private static findPresetImage(name: string, categoryName: string): string {
-    const q = `${name} ${categoryName}`.toLowerCase();
-    const match = PRODUCT_IMAGE_PRESETS.find(p => {
-      const pName = p.name.toLowerCase();
-      return q.includes(pName) || pName.split(' ').some(w => w.length > 3 && q.includes(w));
-    });
-    return match ? match.url : '';
-  }
-
-  /**
-   * Synthesizes OCR lines from page when running in web fallback
-   */
   private static synthesizeOcrFromPage(page: ScannedMenuPage, pageNumber: number): OcrResult {
-    // If text was embedded or simulated, extract it, otherwise provide a standard high-quality baseline
     return {
-      fullText: page.name || `Page ${pageNumber}`,
+      fullText: page.name || `Página ${pageNumber}`,
       textBlocks: [],
       lines: [],
       elements: [],

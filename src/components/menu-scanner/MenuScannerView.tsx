@@ -46,6 +46,7 @@ import { optimizeImageForOCR } from '../../utils/imageOptimizer.ts';
 import { generateSampleMenuPages } from '../../utils/sampleMenuGenerator.ts';
 import { useAuraNetwork } from '../../hooks/useAuraNetwork.ts';
 import { LocalOcrEngine } from '../../services/ocr/localOcrEngine.ts';
+import { ImageOrientationService } from '../../services/ocr/imageOrientationService.ts';
 import { NativeBridgeService } from '../../services/native/NativeBridgeService.ts';
 
 export const MenuScannerView: React.FC = () => {
@@ -109,7 +110,7 @@ export const MenuScannerView: React.FC = () => {
   const currencySymbol = settings.currency || '$';
 
   // -------------------------------------------------------------
-  // File Upload Handlers (Images & PDFs)
+  // File Upload Handlers (Images & PDFs with Auto-Orientation Detection - Requirement 2)
   // -------------------------------------------------------------
   const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -117,34 +118,55 @@ export const MenuScannerView: React.FC = () => {
     const fileList = Array.from(files);
     showToast({
       type: 'info',
-      title: 'Optimizing Pages',
-      message: `Processing ${fileList.length} menu ${fileList.length === 1 ? 'page' : 'pages'} for AI recognition...`
+      title: 'Analizando Páginas',
+      message: `Detectando orientación y optimizando ${fileList.length} ${fileList.length === 1 ? 'página' : 'páginas'}...`
     });
 
     for (let idx = 0; idx < fileList.length; idx++) {
       const file = fileList[idx];
       const reader = new FileReader();
-      
+
       await new Promise<void>((resolve) => {
         reader.onload = async () => {
           if (typeof reader.result === 'string') {
             try {
-              const opt = await optimizeImageForOCR(reader.result, 0, 1800, 0.85);
+              // Automatic Orientation Detection, Deskew & Preprocessing (Requirement 2 & 3)
+              const orientResult = await ImageOrientationService.analyzeAndCorrect(reader.result);
+
               const newPage: ScannedMenuPage = {
                 id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-                name: file.name || `Page ${pages.length + idx + 1}`,
-                dataUrl: opt.dataUrl,
+                name: file.name || `Página ${pages.length + idx + 1}`,
+                dataUrl: orientResult.correctedDataUrl,
+                originalDataUrl: orientResult.originalDataUrl,
+                correctedDataUrl: orientResult.correctedDataUrl,
+                processedOcrDataUrl: orientResult.processedOcrDataUrl,
+                rotation: orientResult.detectedRotation,
+                autoRotationApplied: orientResult.detectedRotation,
+                deskewAngle: orientResult.deskewAngle,
+                activeDisplayTab: 'corrected',
                 mimeType: 'image/jpeg',
-                rotation: 0,
                 timestamp: new Date().toISOString(),
-                fileSize: opt.fileSize
+                fileSize: Math.round(orientResult.correctedDataUrl.length * 0.75),
+                width: orientResult.width,
+                height: orientResult.height
               };
+
               setPages(prev => [...prev, newPage]);
+
+              if (orientResult.detectedRotation !== 0) {
+                showToast({
+                  type: 'info',
+                  title: 'Orientación Corregida',
+                  message: `Se corrigió automáticamente la orientación de ${file.name || 'la página'} (${orientResult.detectedRotation}° CW).`
+                });
+              }
             } catch (err) {
               const newPage: ScannedMenuPage = {
                 id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-                name: file.name || `Page ${pages.length + idx + 1}`,
+                name: file.name || `Página ${pages.length + idx + 1}`,
                 dataUrl: reader.result as string,
+                originalDataUrl: reader.result as string,
+                correctedDataUrl: reader.result as string,
                 mimeType: file.type || 'image/jpeg',
                 rotation: 0,
                 timestamp: new Date().toISOString(),
@@ -162,8 +184,8 @@ export const MenuScannerView: React.FC = () => {
 
     showToast({
       type: 'success',
-      title: 'Pages Ready',
-      message: `${fileList.length} menu ${fileList.length === 1 ? 'page' : 'pages'} ready for AI analysis.`
+      title: 'Páginas Listas',
+      message: `${fileList.length} ${fileList.length === 1 ? 'página' : 'páginas'} listas para escaneo OCR.`
     });
   };
 
@@ -188,11 +210,54 @@ export const MenuScannerView: React.FC = () => {
     }
   };
 
-  // Page management callbacks
-  const handleRotatePage = (id: string) => {
+  // Page management callbacks & manual rotation controls (Requirement 3)
+  const handleRotatePageRight = (id: string) => {
     setPages(prev =>
       prev.map(p => (p.id === id ? { ...p, rotation: (p.rotation + 90) % 360 } : p))
     );
+  };
+
+  const handleRotatePageLeft = (id: string) => {
+    setPages(prev =>
+      prev.map(p => (p.id === id ? { ...p, rotation: (p.rotation + 270) % 360 } : p))
+    );
+  };
+
+  const handleResetPageOrientation = (id: string) => {
+    setPages(prev =>
+      prev.map(p =>
+        p.id === id
+          ? {
+              ...p,
+              rotation: 0,
+              deskewAngle: 0,
+              dataUrl: p.originalDataUrl || p.dataUrl,
+              activeDisplayTab: 'original'
+            }
+          : p
+      )
+    );
+  };
+
+  const handleTogglePageTab = (id: string, tab: 'corrected' | 'original') => {
+    setPages(prev =>
+      prev.map(p =>
+        p.id === id
+          ? {
+              ...p,
+              activeDisplayTab: tab,
+              dataUrl:
+                tab === 'corrected'
+                  ? p.correctedDataUrl || p.dataUrl
+                  : p.originalDataUrl || p.dataUrl
+            }
+          : p
+      )
+    );
+  };
+
+  const handleUpdateProductsBatch = (updatedProducts: ExtractedProduct[]) => {
+    setExtractedProducts(updatedProducts);
   };
 
   const handleRemovePage = (id: string) => {
@@ -566,11 +631,11 @@ export const MenuScannerView: React.FC = () => {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsCameraOpen(true)}
+                  onClick={handleNativeCameraLaunch}
                   className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-sm shadow-lg flex items-center gap-2.5 transition-all cursor-pointer"
                 >
                   <Camera className="w-5 h-5" />
-                  Capture with Camera
+                  Capture with Camera (CameraX)
                 </button>
 
                 <label
@@ -776,7 +841,10 @@ export const MenuScannerView: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs mb-8">
             <PageManager
               pages={pages}
-              onRotatePage={handleRotatePage}
+              onRotatePageRight={handleRotatePageRight}
+              onRotatePageLeft={handleRotatePageLeft}
+              onResetPageOrientation={handleResetPageOrientation}
+              onTogglePageTab={handleTogglePageTab}
               onRemovePage={handleRemovePage}
               onMovePage={handleMovePage}
               onPreviewPage={page => setPreviewPage(page)}

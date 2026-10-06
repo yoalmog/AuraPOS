@@ -201,12 +201,22 @@ export class MenuScannerImportService {
         }))
       }));
 
-      const presetImage = MenuScannerImportService.findPresetImage(cleanName, catName);
+      // Separates Menu Scanning from Product Images (Requirement 7)
+      // Check if existing product in database had a REAL upload
+      let finalImageUrl = '';
+      let finalImageSource: 'REAL_UPLOAD' | 'AI_GENERATED' | 'NO_IMAGE' = 'NO_IMAGE';
+
+      if (matchedExisting?.imageUrl && matchedExisting.imageSource === 'REAL_UPLOAD') {
+        finalImageUrl = matchedExisting.imageUrl;
+        finalImageSource = 'REAL_UPLOAD';
+      }
 
       processedProducts.push({
         id: matchedExisting ? matchedExisting.id : `prod_scan_${Date.now()}_${idx}`,
         tempId: `temp_prod_${idx}`,
         name: cleanName,
+        originalText: cleanName,
+        normalizedText: cleanName.toLowerCase().trim(),
         categoryName: categoryEntry.name,
         categoryId: categoryEntry.id,
         price,
@@ -214,7 +224,7 @@ export class MenuScannerImportService {
         description: p.description || '',
         sku: autoSku,
         barcode: autoBarcode,
-        unit: p.unit || 'item',
+        unit: p.unit || 'porción',
         stock: 50,
         lowStockThreshold: 10,
         trackInventory: true,
@@ -224,7 +234,10 @@ export class MenuScannerImportService {
         isVegetarian: !!p.isVegetarian,
         isGlutenFree: !!p.isGlutenFree,
         isAlcoholic: !!p.isAlcoholic,
-        imageUrl: presetImage,
+        imageUrl: finalImageUrl,
+        imageSource: finalImageSource,
+        aiImageState: 'idle',
+        aiImageHistory: [],
         iconName: categoryEntry.iconName,
         color: categoryEntry.color,
         variants,
@@ -346,6 +359,7 @@ export class MenuScannerImportService {
         const pIdx = updatedProductsList.findIndex(p => p.id === prod.conflictExistingId);
         if (pIdx !== -1) {
           const current = updatedProductsList[pIdx];
+          const finalImageSource = prod.imageSource || (prod.imageUrl ? 'AI_GENERATED' : current.imageSource || 'NO_IMAGE');
           const updated: Product = {
             ...current,
             name: prod.name,
@@ -354,6 +368,7 @@ export class MenuScannerImportService {
             cost: prod.cost,
             description: prod.description || current.description,
             imageUrl: prod.imageUrl || current.imageUrl,
+            imageSource: finalImageSource,
             variants: convertedVariants.length > 0
               ? convertedVariants.map(v => ({ ...v, productId: current.id }))
               : current.variants,
@@ -362,10 +377,23 @@ export class MenuScannerImportService {
           updatedProductsList[pIdx] = updated;
           updatedProductNames.push(updated.name);
           await LocalDB.put('products', updated);
+
+          if (prod.imageUrl && finalImageSource === 'AI_GENERATED') {
+            StorageService.saveProductImageMetadata({
+              imageId: `img_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              productId: current.id,
+              source: 'AI_GENERATED',
+              url: prod.imageUrl,
+              prompt: prod.aiImagePrompt || `Professional food photography of ${prod.name}`,
+              createdAt: new Date().toISOString(),
+              isCurrent: true
+            });
+          }
         }
       } else {
         // Create new product
         const newProdId = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const finalImageSource = prod.imageSource || (prod.imageUrl ? 'AI_GENERATED' : 'NO_IMAGE');
         const newProduct: Product = {
           id: newProdId,
           storeId,
@@ -376,13 +404,14 @@ export class MenuScannerImportService {
           barcode: prod.barcode || `${Math.floor(100000000000 + Math.random() * 900000000000)}`,
           price: prod.price,
           cost: prod.cost,
-          unit: prod.unit || 'item',
+          unit: prod.unit || 'porción',
           trackInventory: prod.trackInventory !== undefined ? prod.trackInventory : true,
           stock: prod.stock || 50,
           lowStockThreshold: prod.lowStockThreshold || 10,
           active: true,
           isFavorite: prod.isFavorite || false,
           imageUrl: prod.imageUrl || '',
+          imageSource: finalImageSource,
           variants: convertedVariants.map(v => ({ ...v, productId: newProdId })),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -391,6 +420,18 @@ export class MenuScannerImportService {
         updatedProductsList.push(newProduct);
         createdProductNames.push(newProduct.name);
         await LocalDB.put('products', newProduct);
+
+        if (prod.imageUrl && finalImageSource === 'AI_GENERATED') {
+          StorageService.saveProductImageMetadata({
+            imageId: `img_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            productId: newProdId,
+            source: 'AI_GENERATED',
+            url: prod.imageUrl,
+            prompt: prod.aiImagePrompt || `Professional food photography of ${prod.name}`,
+            createdAt: new Date().toISOString(),
+            isCurrent: true
+          });
+        }
       }
     }
 

@@ -47,10 +47,15 @@ export interface OcrResult {
 export interface ScannedMenuPage {
   id: string;
   name: string;
-  dataUrl: string; // Original Base64 data URL
+  dataUrl: string; // Corrected upright display data URL
+  originalDataUrl?: string; // Untouched original photo
+  correctedDataUrl?: string; // Deskewed and orientation-corrected
   processedOcrDataUrl?: string; // Preprocessed contrast-enhanced grayscale for OCR
   mimeType: string;
-  rotation: number; // 0, 90, 180, 270
+  rotation: number; // Current orientation (0, 90, 180, 270)
+  autoRotationApplied?: number; // Detected rotation applied automatically
+  deskewAngle?: number; // Detected deskew angle
+  activeDisplayTab?: 'corrected' | 'original';
   timestamp: string;
   fileSize?: number;
   ocrResult?: OcrResult;
@@ -83,10 +88,20 @@ export interface ExtractedModifierGroup {
 export type ConflictResolution = 'create_new' | 'update_existing' | 'skip';
 export type CategoryConflictResolution = 'create_new' | 'merge_existing' | 'skip';
 
+export interface ProductAiImageVersion {
+  id: string;
+  url: string;
+  prompt: string;
+  version: number;
+  createdAt: string;
+}
+
 export interface ExtractedProduct {
   id: string;
   tempId: string;
   name: string;
+  originalText: string; // Exact casing and Spanish accents preserved (e.g. "Pollo a la brasa")
+  normalizedText: string; // Lowercase normalized for search/dedup (e.g. "pollo a la brasa")
   categoryName: string;
   categoryId?: string;
   price: number;
@@ -105,6 +120,11 @@ export interface ExtractedProduct {
   isGlutenFree?: boolean;
   isAlcoholic?: boolean;
   imageUrl?: string;
+  imageSource?: 'REAL_UPLOAD' | 'AI_GENERATED' | 'NO_IMAGE';
+  aiImagePrompt?: string;
+  aiImageHistory?: ProductAiImageVersion[];
+  aiImageState?: 'idle' | 'generating' | 'generated' | 'failed' | 'accepted';
+  aiImageError?: string;
   iconName?: string;
   color?: string;
   variants: ExtractedVariant[];
@@ -116,6 +136,7 @@ export interface ExtractedProduct {
   originalOcrText?: string;
   confidence?: number;
   isLowConfidence?: boolean;
+  confidenceLevel?: 'HIGH' | 'MEDIUM' | 'LOW';
   warnings?: string[];
   duplicateMatch?: 'NEW' | 'MATCH' | 'POSSIBLE DUPLICATE';
   selected: boolean;

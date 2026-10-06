@@ -482,11 +482,12 @@ class NativeBridge(
                 val rawBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     ?: throw IllegalArgumentException("Failed to decode image into Bitmap")
 
-                // Step 1: Local Image Preprocessing (preserving original + processed OCR)
+                // Step 1: Local Image Preprocessing with OpenCV (rotation, deskew, perspective correction)
                 val preprocessed = ImagePreprocessor.preprocessForOcr(rawBitmap)
+                val correctedDataUrl = ImagePreprocessor.toBase64DataUrl(preprocessed.correctedBitmap, 85)
                 val processedOcrDataUrl = ImagePreprocessor.toBase64DataUrl(preprocessed.processedOcrBitmap, 80)
 
-                // Step 2: On-Device OCR with Google ML Kit
+                // Step 2: On-Device OCR with Google ML Kit configured for Spanish Script
                 val ocrResult = localOcrService.recognize(preprocessed.processedOcrBitmap, pageNumber)
 
                 // Step 3: Query existing product names for duplicate detection
@@ -503,7 +504,11 @@ class NativeBridge(
                     put("durationMs", totalDuration)
                     put("detectedCurrency", parsedStructure.detectedCurrency)
                     put("menuTitle", parsedStructure.menuTitle ?: "Menu Page $pageNumber")
+                    put("correctedDataUrl", correctedDataUrl)
                     put("processedOcrDataUrl", processedOcrDataUrl)
+                    put("detectedRotation", preprocessed.rotationDegrees)
+                    put("deskewAngle", preprocessed.deskewAngle)
+                    put("perspectiveCorrected", preprocessed.perspectiveCorrected)
                     put("categories", JSONArray().apply {
                         parsedStructure.categories.forEach { put(it.toJsonObject()) }
                     })

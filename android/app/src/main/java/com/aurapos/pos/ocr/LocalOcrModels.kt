@@ -186,6 +186,8 @@ data class MenuImportCategory(
 data class MenuImportProduct(
     val tempId: String,
     val name: String,
+    val originalText: String = name,
+    val normalizedText: String = name.lowercase().trim(),
     val categoryName: String,
     val description: String,
     val price: Double,
@@ -198,16 +200,22 @@ data class MenuImportProduct(
     val warnings: List<String> = emptyList(),
     val variants: List<MenuImportVariant> = emptyList(),
     val modifiers: List<MenuImportModifier> = emptyList(),
-    val duplicateMatch: String = "NEW" // "NEW", "MATCH", "POSSIBLE DUPLICATE"
+    val duplicateMatch: String = "NEW", // "NEW", "MATCH", "POSSIBLE DUPLICATE"
+    val imageUrl: String = "",
+    val imageSource: String = "NO_IMAGE"
 ) {
     fun toJsonObject(): JSONObject = JSONObject().apply {
         put("id", tempId)
         put("tempId", tempId)
         put("name", name)
+        put("originalText", originalText)
+        put("normalizedText", normalizedText)
         put("categoryName", categoryName)
         put("description", description)
         put("price", price)
         put("cost", Math.round(price * 0.35 * 100) / 100.0)
+        put("imageUrl", imageUrl)
+        put("imageSource", imageSource)
         put("sourcePage", sourcePage)
         sourceBoundingBox?.let { put("sourceBoundingBox", it.toJsonObject()) }
         put("extractedText", extractedText)

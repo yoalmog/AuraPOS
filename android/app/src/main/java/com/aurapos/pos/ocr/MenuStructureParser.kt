@@ -244,14 +244,16 @@ object MenuStructureParser {
         // Categories must NOT contain a price
         if (extractPriceFromLine(line) != null) return false
 
-        // Common category keywords
+        // Common category keywords including Spanish menu terminology (Requirement 5)
         val lower = text.toLowerCase(Locale.US)
         val categoryKeywords = listOf(
             "appetizers", "starters", "entrees", "mains", "pizzas", "pasta",
             "salads", "desserts", "beverages", "drinks", "cocktails", "wines",
             "sides", "burgers", "sandwiches", "tacos", "soups", "combos",
-            "entradas", "platos", "fondos", "postres", "bebidas", "cafes",
-            "ensaladas", "guarniciones", "piqueos", "especiales"
+            "entradas", "platos principales", "platos de fondo", "fondos",
+            "postres", "bebidas", "cafés", "cafes", "cocteles", "cócteles",
+            "ensaladas", "guarniciones", "piqueos", "especialidades", "especiales",
+            "hamburguesas", "sopas", "caldos", "para compartir", "carnes", "parrillas"
         )
 
         if (categoryKeywords.any { lower.contains(it) }) {
@@ -392,6 +394,8 @@ object MenuStructureParser {
             return MenuImportProduct(
                 tempId = tempId,
                 name = cleanN,
+                originalText = cleanN,
+                normalizedText = cleanN.toLowerCase(Locale.ROOT).trim(),
                 categoryName = categoryName,
                 description = description.trim(),
                 price = price,
@@ -404,7 +408,9 @@ object MenuStructureParser {
                 warnings = warnings,
                 variants = variants,
                 modifiers = modifiers,
-                duplicateMatch = duplicateMatch
+                duplicateMatch = duplicateMatch,
+                imageUrl = "",
+                imageSource = "NO_IMAGE"
             )
         }
     }

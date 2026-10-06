@@ -3,4 +3,5 @@
     <string name="bluetooth_permission_rationale">AuraPOS requires Bluetooth permissions to scan, pair, and send ESC/POS receipt data to your physical thermal printers (such as X18 Mini).</string>
     <string name="grant_permission">Grant Permission</string>
     <string name="bluetooth_disabled">Bluetooth is currently disabled on this device. Please turn on Bluetooth to connect printers.</string>
+    <string name="camera_permission_rationale">AuraPOS requires Camera access to photograph printed menus for high-resolution AI scanning and Spanish OCR.</string>
 </resources>

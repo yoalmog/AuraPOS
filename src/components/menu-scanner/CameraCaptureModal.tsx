@@ -9,9 +9,13 @@ import {
   SwitchCamera,
   Layers,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  ShieldCheck,
+  Smartphone
 } from 'lucide-react';
 import { ScannedMenuPage } from '../../types/menuScanner.ts';
+import { NativeBridgeService } from '../../services/native/NativeBridgeService.ts';
+import { ImageOrientationService } from '../../services/ocr/imageOrientationService.ts';
 
 interface CameraCaptureModalProps {
   isOpen: boolean;
@@ -20,6 +24,12 @@ interface CameraCaptureModalProps {
   existingPagesCount: number;
 }
 
+/**
+ * CameraCaptureModal with CameraX API and Runtime Hardware Permissions
+ * - Supports high-resolution hardware capture (CameraX on Android / getUserMedia in Web)
+ * - Explicitly requests and validates camera runtime permissions
+ * - Automatically routes captured frames through OpenCV image processor for orientation, deskewing & perspective correction
+ */
 export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   isOpen,
   onClose,
@@ -35,9 +45,16 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   const [hasTorch, setHasTorch] = useState<boolean>(false);
   const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
   const [isFlashEffect, setIsFlashEffect] = useState<boolean>(false);
+  const [isProcessingFrame, setIsProcessingFrame] = useState<boolean>(false);
+  const [isNativeAndroid, setIsNativeAndroid] = useState<boolean>(false);
 
-  // Start Camera
+  useEffect(() => {
+    setIsNativeAndroid(NativeBridgeService.isNativeAndroid());
+  }, []);
+
+  // Start Camera with runtime permission check
   const startCamera = useCallback(async (mode: 'environment' | 'user') => {
     try {
       setCameraError(null);
@@ -45,17 +62,32 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
         stream.getTracks().forEach(t => t.stop());
       }
 
+      // Query permission if supported
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const permStatus = await navigator.permissions.query({ name: 'camera' as any });
+          setPermissionState(permStatus.state as any);
+          permStatus.onchange = () => {
+            setPermissionState(permStatus.state as any);
+          };
+        } catch {
+          // Fallback if browser doesn't support camera query
+        }
+      }
+
+      // High-resolution constraints (matches CameraX 1080p / 4K sensor preferences)
       const constraints: MediaStreamConstraints = {
         video: {
           facingMode: { ideal: mode },
-          width: { ideal: 2560 },
-          height: { ideal: 1440 }
+          width: { ideal: 2560, min: 1280 },
+          height: { ideal: 1440, min: 720 }
         },
         audio: false
       };
 
       const newStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(newStream);
+      setPermissionState('granted');
 
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
@@ -68,12 +100,15 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
       setHasTorch(!!capabilities.torch);
       setIsTorchOn(false);
     } catch (err: any) {
-      console.warn('Camera access failed:', err);
-      setCameraError(
-        err?.name === 'NotAllowedError'
-          ? 'Camera permission was denied. Please allow camera access in your browser or device settings.'
-          : 'Unable to access device camera. You can also upload menu photos or PDF files directly.'
-      );
+      console.warn('Camera access error:', err);
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setPermissionState('denied');
+        setCameraError('Permiso de Cámara Denegado: Conceda acceso a la cámara en los permisos de su dispositivo o navegador para escanear el menú.');
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        setCameraError('No se encontró ninguna cámara disponible en el dispositivo.');
+      } else {
+        setCameraError('No se pudo iniciar la cámara de alta resolución. Puede subir fotos directamente o utilizar la galería.');
+      }
     }
   }, [stream]);
 
@@ -93,6 +128,34 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
       }
     };
   }, [isOpen]);
+
+  // Launch Native CameraX directly if inside Android POS Shell
+  const handleLaunchNativeCameraX = async () => {
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        setIsProcessingFrame(true);
+        const res = await NativeBridgeService.menuScanner.launchNativeCamera();
+        if (res.success && res.pages && res.pages.length > 0) {
+          const formatted = res.pages.map((p: any, idx: number) => ({
+            id: p.id || `page_camerax_${Date.now()}_${idx}`,
+            name: p.name || `Página de Menú ${existingPagesCount + capturedPages.length + idx + 1}`,
+            dataUrl: p.dataUrl,
+            originalDataUrl: p.dataUrl,
+            correctedDataUrl: p.dataUrl,
+            mimeType: 'image/jpeg',
+            rotation: p.rotation || 0,
+            timestamp: new Date().toISOString(),
+            fileSize: p.fileSize || Math.round((p.dataUrl.length * 3) / 4)
+          }));
+          setCapturedPages(prev => [...prev, ...formatted]);
+        }
+      } catch (err: any) {
+        console.warn('Native CameraX trigger failed:', err);
+      } finally {
+        setIsProcessingFrame(false);
+      }
+    }
+  };
 
   // Toggle Torch
   const toggleTorch = async () => {
@@ -117,8 +180,8 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
     startCamera(nextMode);
   };
 
-  // Capture Single Photo
-  const handleSnap = () => {
+  // Capture High-Resolution Photo and apply OpenCV orientation & deskew pipeline
+  const handleSnap = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -138,19 +201,50 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
     setTimeout(() => setIsFlashEffect(false), 200);
 
     ctx.drawImage(video, 0, 0, width, height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const rawDataUrl = canvas.toDataURL('image/jpeg', 0.94);
 
-    const newPage: ScannedMenuPage = {
-      id: `page_${Date.now()}_${capturedPages.length}`,
-      name: `Menu Page ${existingPagesCount + capturedPages.length + 1}`,
-      dataUrl,
-      mimeType: 'image/jpeg',
-      rotation: 0,
-      timestamp: new Date().toISOString(),
-      fileSize: Math.round((dataUrl.length * 3) / 4)
-    };
+    setIsProcessingFrame(true);
 
-    setCapturedPages(prev => [...prev, newPage]);
+    try {
+      // Analyze with OpenCV / ImageOrientationService for automatic rotation & deskew
+      const orientResult = await ImageOrientationService.analyzeAndCorrect(rawDataUrl);
+
+      const newPage: ScannedMenuPage = {
+        id: `page_${Date.now()}_${capturedPages.length}`,
+        name: `Página ${existingPagesCount + capturedPages.length + 1}`,
+        dataUrl: orientResult.correctedDataUrl,
+        originalDataUrl: orientResult.originalDataUrl,
+        correctedDataUrl: orientResult.correctedDataUrl,
+        processedOcrDataUrl: orientResult.processedOcrDataUrl,
+        rotation: orientResult.detectedRotation,
+        autoRotationApplied: orientResult.detectedRotation,
+        deskewAngle: orientResult.deskewAngle,
+        activeDisplayTab: 'corrected',
+        mimeType: 'image/jpeg',
+        timestamp: new Date().toISOString(),
+        fileSize: Math.round((orientResult.correctedDataUrl.length * 3) / 4),
+        width: orientResult.width,
+        height: orientResult.height
+      };
+
+      setCapturedPages(prev => [...prev, newPage]);
+    } catch (e) {
+      console.warn('Orientation analysis fallback:', e);
+      const fallbackPage: ScannedMenuPage = {
+        id: `page_${Date.now()}_${capturedPages.length}`,
+        name: `Página ${existingPagesCount + capturedPages.length + 1}`,
+        dataUrl: rawDataUrl,
+        originalDataUrl: rawDataUrl,
+        correctedDataUrl: rawDataUrl,
+        mimeType: 'image/jpeg',
+        rotation: 0,
+        timestamp: new Date().toISOString(),
+        fileSize: Math.round((rawDataUrl.length * 3) / 4)
+      };
+      setCapturedPages(prev => [...prev, fallbackPage]);
+    } finally {
+      setIsProcessingFrame(false);
+    }
   };
 
   // Finish & Submit Pages
@@ -173,12 +267,30 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               <Camera className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-semibold text-base leading-tight">Live Menu Scanner Camera</h3>
-              <p className="text-xs text-slate-400">Position menu page flat in bright lighting</p>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-base leading-tight">Cámara de Menú de Alta Resolución</h3>
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                  {isNativeAndroid ? 'CameraX Nativo' : 'Cámara Web Activa'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">Capture el menú plano con buena iluminación. Detección OpenCV y OCR en Español activos.</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {isNativeAndroid && (
+              <button
+                type="button"
+                onClick={handleLaunchNativeCameraX}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Abrir Cámara Nativa Android con CameraX"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                CameraX Nativo
+              </button>
+            )}
+
             {hasTorch && (
               <button
                 type="button"
@@ -188,7 +300,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                     ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
                     : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
                 }`}
-                title="Toggle Torch"
+                title="Linterna / Flash"
               >
                 {isTorchOn ? <Zap className="w-4 h-4" /> : <ZapOff className="w-4 h-4" />}
               </button>
@@ -198,7 +310,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               type="button"
               onClick={toggleCameraFacing}
               className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition-colors"
-              title="Flip Camera"
+              title="Cambiar Cámara (Frontal / Trasera)"
             >
               <SwitchCamera className="w-4 h-4" />
             </button>
@@ -218,22 +330,33 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
           {cameraError ? (
             <div className="text-center p-8 max-w-md">
               <AlertCircle className="w-12 h-12 text-amber-400 mx-auto mb-3" />
-              <h4 className="text-lg font-semibold text-white mb-2">Camera Unavailable</h4>
+              <h4 className="text-lg font-semibold text-white mb-2">Cámara No Disponible</h4>
               <p className="text-sm text-slate-300 mb-6 leading-relaxed">{cameraError}</p>
-              
+
               <div className="flex flex-wrap items-center justify-center gap-3">
                 <button
                   type="button"
                   onClick={() => startCamera(facingMode)}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer"
                 >
                   <RotateCcw className="w-4 h-4" />
-                  Retry Camera
+                  Reintentar Permiso y Cámara
                 </button>
+
+                {isNativeAndroid && (
+                  <button
+                    type="button"
+                    onClick={handleLaunchNativeCameraX}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    Abrir CameraX Nativo
+                  </button>
+                )}
 
                 <label className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer">
                   <Camera className="w-4 h-4 text-blue-400" />
-                  Upload Photo / File
+                  Subir Foto de Menú
                   <input
                     type="file"
                     accept="image/*,application/pdf"
@@ -244,18 +367,40 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                       if (!files || files.length === 0) return;
                       Array.from(files).forEach((file, idx) => {
                         const reader = new FileReader();
-                        reader.onload = () => {
+                        reader.onload = async () => {
                           if (typeof reader.result === 'string') {
-                            const newPage: ScannedMenuPage = {
-                              id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-                              name: file.name || `Page ${existingPagesCount + capturedPages.length + idx + 1}`,
-                              dataUrl: reader.result,
-                              mimeType: file.type || 'image/jpeg',
-                              rotation: 0,
-                              timestamp: new Date().toISOString(),
-                              fileSize: file.size
-                            };
-                            setCapturedPages(prev => [...prev, newPage]);
+                            try {
+                              const orient = await ImageOrientationService.analyzeAndCorrect(reader.result);
+                              const newPage: ScannedMenuPage = {
+                                id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
+                                name: file.name || `Página ${existingPagesCount + capturedPages.length + idx + 1}`,
+                                dataUrl: orient.correctedDataUrl,
+                                originalDataUrl: orient.originalDataUrl,
+                                correctedDataUrl: orient.correctedDataUrl,
+                                processedOcrDataUrl: orient.processedOcrDataUrl,
+                                rotation: orient.detectedRotation,
+                                autoRotationApplied: orient.detectedRotation,
+                                deskewAngle: orient.deskewAngle,
+                                activeDisplayTab: 'corrected',
+                                mimeType: file.type || 'image/jpeg',
+                                timestamp: new Date().toISOString(),
+                                fileSize: file.size
+                              };
+                              setCapturedPages(prev => [...prev, newPage]);
+                            } catch {
+                              const fallbackPage: ScannedMenuPage = {
+                                id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
+                                name: file.name || `Página ${existingPagesCount + capturedPages.length + idx + 1}`,
+                                dataUrl: reader.result as string,
+                                originalDataUrl: reader.result as string,
+                                correctedDataUrl: reader.result as string,
+                                mimeType: file.type || 'image/jpeg',
+                                rotation: 0,
+                                timestamp: new Date().toISOString(),
+                                fileSize: file.size
+                              };
+                              setCapturedPages(prev => [...prev, fallbackPage]);
+                            }
                           }
                         };
                         reader.readAsDataURL(file);
@@ -291,7 +436,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
 
                 <div className="text-center">
                   <span className="bg-slate-950/75 backdrop-blur-sm text-blue-300 text-xs px-3 py-1.5 rounded-full font-medium shadow-md border border-blue-500/30">
-                    Align printed menu page within borders
+                    Alinee el menú dentro de los bordes (detección OpenCV activa)
                   </span>
                 </div>
 
@@ -323,7 +468,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               </div>
             ))}
             {capturedPages.length === 0 && (
-              <span className="text-xs text-slate-500 italic">No pages captured yet</span>
+              <span className="text-xs text-slate-500 italic">Ninguna página capturada aún</span>
             )}
           </div>
 
@@ -332,9 +477,9 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
             <button
               type="button"
               onClick={handleSnap}
-              disabled={!!cameraError}
+              disabled={!!cameraError || isProcessingFrame}
               className="w-16 h-16 rounded-full bg-white hover:bg-slate-100 active:scale-95 disabled:opacity-40 text-slate-900 flex items-center justify-center shadow-lg border-4 border-slate-700 transition-all cursor-pointer"
-              title="Snap Photo"
+              title="Tomar Foto de Alta Resolución"
             >
               <div className="w-12 h-12 rounded-full border-2 border-slate-900 flex items-center justify-center">
                 <Camera className="w-6 h-6 text-slate-900" />
@@ -348,10 +493,10 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               type="button"
               onClick={handleDone}
               disabled={capturedPages.length === 0}
-              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-medium text-sm transition-all shadow-md flex items-center gap-2"
+              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-medium text-sm transition-all shadow-md flex items-center gap-2 cursor-pointer"
             >
               <Check className="w-4 h-4" />
-              Use {capturedPages.length} {capturedPages.length === 1 ? 'Page' : 'Pages'}
+              Usar {capturedPages.length} {capturedPages.length === 1 ? 'Página' : 'Páginas'}
             </button>
           </div>
         </div>

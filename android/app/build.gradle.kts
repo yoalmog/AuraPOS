@@ -109,8 +109,19 @@ dependencies {
     // Android Keystore & EncryptedSharedPreferences for Hardware/PIN Security
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
-    // Google ML Kit On-Device Text Recognition for Local-First Menu Scanner
+    // Google ML Kit On-Device Text Recognition specifically configured for Latin / Spanish script
+    // Supports Spanish accents (á, é, í, ó, ú, ü, ñ, ¿, ¡)
     implementation("com.google.mlkit:text-recognition:16.0.0")
+
+    // CameraX API for high-resolution menu photo capture with flash, autofocus, and zoom
+    val cameraxVersion = "1.3.2"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
+
+    // OpenCV for Android: high-performance computer vision, auto-rotation, deskewing & perspective correction
+    implementation("org.opencv:opencv:4.9.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

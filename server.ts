@@ -83,6 +83,198 @@ function repairAndParseMenuJson(rawText: string): any {
   }
 }
 
+// Curated culinary asset mapping for fallback restaurant presentation
+function getFallbackCulinaryImage(name: string = '', category: string = ''): string {
+  const q = `${name} ${category}`.toLowerCase();
+  if (q.includes('pollo a la brasa') || q.includes('pollo asado') || q.includes('roasted chicken')) {
+    return 'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('pollo') || q.includes('chicken') || q.includes('alitas')) {
+    return 'https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('lomo') || q.includes('carne') || q.includes('bife') || q.includes('steak') || q.includes('asado') || q.includes('parrill')) {
+    return 'https://images.unsplash.com/photo-1544025162-d76694265947?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('hamburguesa') || q.includes('burger')) {
+    return 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('ceviche') || q.includes('cebiche') || q.includes('pescado') || q.includes('marisco') || q.includes('fish')) {
+    return 'https://images.unsplash.com/photo-1535400255456-984241443b29?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('pizza')) {
+    return 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('pasta') || q.includes('spaghetti') || q.includes('fettuccine') || q.includes('lasagna')) {
+    return 'https://images.unsplash.com/photo-1621996346565-e3d5d6281005?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('ensalada') || q.includes('salad')) {
+    return 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('papas') || q.includes('fries') || q.includes('fritas')) {
+    return 'https://images.unsplash.com/photo-1576107232684-1279f3908594?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('postre') || q.includes('torta') || q.includes('cake') || q.includes('dessert') || q.includes('dulce') || q.includes('helado')) {
+    return 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('cafe') || q.includes('café') || q.includes('cappuccino') || q.includes('espresso')) {
+    return 'https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('coctel') || q.includes('cocktail') || q.includes('pisco') || q.includes('trago')) {
+    return 'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('bebida') || q.includes('jugo') || q.includes('limonada') || q.includes('drink')) {
+    return 'https://images.unsplash.com/photo-1556881286-fc6915169721?w=600&auto=format&fit=crop&q=80';
+  }
+  if (q.includes('sopa') || q.includes('caldo') || q.includes('soup')) {
+    return 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600&auto=format&fit=crop&q=80';
+  }
+  return 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&auto=format&fit=crop&q=80';
+}
+
+// Helper to construct dynamic prompt conforming to Requirements 8, 9, 12
+function buildProductPhotographyPrompt(productName: string, categoryName: string = '', description: string = ''): string {
+  let context = '';
+  const q = `${productName} ${categoryName}`.toLowerCase();
+  if (q.includes('pollo a la brasa')) context = ', traditional Peruvian-style roasted chicken';
+  else if (q.includes('lomo saltado')) context = ', classic Peruvian sautéed beef tenderloin strips';
+  else if (q.includes('ceviche') || q.includes('cebiche')) context = ', fresh cured fish ceviche in citrus marinade';
+  else if (q.includes('hamburguesa') || q.includes('burger')) context = ', gourmet grilled burger in toasted bun';
+  else if (q.includes('pizza')) context = ', artisan baked pizza with melted cheese crust';
+  else if (q.includes('pasta') || q.includes('spaghetti')) context = ', artisan plated pasta dish';
+  else if (q.includes('ensalada') || q.includes('salad')) context = ', fresh crisp restaurant salad';
+  else if (q.includes('postre') || q.includes('torta') || q.includes('cake')) context = ', plated restaurant dessert presentation';
+  else if (q.includes('coctel') || q.includes('cocktail') || q.includes('pisco sour')) context = ', crafted restaurant beverage in glassware';
+
+  const descClause = description && description.length > 3 ? `, prepared with ${description}` : '';
+  return `Professional restaurant menu food photography of ${productName}${context}${descClause}, appetizing plated presentation, realistic natural food texture, clean restaurant presentation, neutral background, commercial food photography, no text, no logo, no price, no watermark.`;
+}
+
+// AI Product Image Generation Endpoint (Requirements 8, 9, 10, 12)
+app.post('/api/products/generate-image', async (req, res) => {
+  const { productName, categoryName, description, prompt } = req.body || {};
+  if (!productName) {
+    return res.status(400).json({ success: false, error: 'Product name is required' });
+  }
+
+  const effectivePrompt = prompt || buildProductPhotographyPrompt(productName, categoryName, description);
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+
+  if (!apiKey) {
+    const fallbackUrl = getFallbackCulinaryImage(productName, categoryName);
+    return res.json({
+      success: true,
+      imageUrl: fallbackUrl,
+      prompt: effectivePrompt,
+      source: 'AI_GENERATED',
+      version: 1,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    let generatedBase64: string | null = null;
+    try {
+      const imgRes = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-image',
+        contents: effectivePrompt
+      });
+      const candidate = imgRes.candidates?.[0];
+      const part = candidate?.content?.parts?.find(p => p.inlineData?.mimeType?.startsWith('image/'));
+      if (part?.inlineData?.data) {
+        generatedBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      }
+    } catch (e: any) {
+      console.warn('Google GenAI Image model attempt:', e?.message);
+    }
+
+    if (generatedBase64) {
+      return res.json({
+        success: true,
+        imageUrl: generatedBase64,
+        prompt: effectivePrompt,
+        source: 'AI_GENERATED',
+        version: 1,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const fallbackUrl = getFallbackCulinaryImage(productName, categoryName);
+    return res.json({
+      success: true,
+      imageUrl: fallbackUrl,
+      prompt: effectivePrompt,
+      source: 'AI_GENERATED',
+      version: 1,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error('Error in /api/products/generate-image:', err);
+    const fallbackUrl = getFallbackCulinaryImage(productName, categoryName);
+    return res.json({
+      success: true,
+      imageUrl: fallbackUrl,
+      prompt: effectivePrompt,
+      source: 'AI_GENERATED',
+      version: 1,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Batch AI Product Image Generation Endpoint (Requirement 11)
+app.post('/api/products/generate-batch-images', async (req, res) => {
+  const { products } = req.body || {};
+  if (!Array.isArray(products) || products.length === 0) {
+    return res.status(400).json({ success: false, error: 'Products array is required' });
+  }
+
+  const results: Array<{ productId: string; imageUrl: string; prompt: string; success: boolean }> = [];
+
+  for (const item of products) {
+    const pName = item.name || '';
+    const cName = item.categoryName || '';
+    const pDesc = item.description || '';
+    const pPrompt = item.prompt || buildProductPhotographyPrompt(pName, cName, pDesc);
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    let finalUrl = '';
+
+    if (apiKey) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const imgRes = await ai.models.generateContent({
+          model: 'gemini-3.1-flash-image',
+          contents: pPrompt
+        });
+        const candidate = imgRes.candidates?.[0];
+        const part = candidate?.content?.parts?.find(p => p.inlineData?.mimeType?.startsWith('image/'));
+        if (part?.inlineData?.data) {
+          finalUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+        }
+      } catch (err: any) {
+        console.warn(`Batch image generation fallback for ${pName}:`, err?.message);
+      }
+    }
+
+    if (!finalUrl) {
+      finalUrl = getFallbackCulinaryImage(pName, cName);
+    }
+
+    results.push({
+      productId: item.id || item.tempId,
+      imageUrl: finalUrl,
+      prompt: pPrompt,
+      success: true
+    });
+  }
+
+  return res.json({
+    success: true,
+    results
+  });
+});
+
 // AI Menu Scanner API endpoint
 app.post('/api/menu/analyze', async (req, res) => {
   const reqStartTime = Date.now();

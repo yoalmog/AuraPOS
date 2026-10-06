@@ -34,7 +34,9 @@ import com.aurapos.pos.bridge.NativeBridge
 import com.aurapos.pos.data.LocalDatabaseHelper
 import com.aurapos.pos.device.DeviceManager
 import com.aurapos.pos.hardware.*
+import com.aurapos.pos.camera.CameraXMenuCaptureManager
 import com.aurapos.pos.ocr.ImagePreprocessor
+import com.aurapos.pos.ocr.OpenCvImageProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -48,7 +50,8 @@ import java.io.File
  * - Hardware barcode gun / wedge scanner interception
  * - Native hardware bridge initialization
  * - Bluetooth, USB, and LAN printer permissions
- * - Camera & File Chooser support for AI Menu Scanner
+ * - CameraX API for high-resolution menu photography with runtime permissions
+ * - OpenCV image processing for rotation, deskewing & perspective correction
  * - Master DeviceManager lifecycle integration
  */
 class MainActivity : AppCompatActivity() {
@@ -62,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cashDrawerManager: CashDrawerManager
     private lateinit var barcodeManager: BarcodeScannerManager
     private lateinit var dbHelper: LocalDatabaseHelper
+    private lateinit var cameraXManager: CameraXMenuCaptureManager
     lateinit var deviceManager: DeviceManager
         private set
 
@@ -196,16 +200,20 @@ class MainActivity : AppCompatActivity() {
 
     fun launchNativeCamera(callbackId: String) {
         runOnUiThread {
+            pendingNativeCameraCallbackId = callbackId
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                pendingNativeCameraCallbackId = callbackId
                 try {
-                    nativeCameraLauncher.launch(null)
+                    // Capture high-resolution photo with CameraX API
+                    cameraXManager.takeHighResolutionPhoto { result ->
+                        // Callback already handled by cameraXManager constructor listener
+                        if (!result.success && result.error != null && !result.error.contains("requested")) {
+                            Log.w("MainActivity", "CameraX direct capture failed, trying system capture fallback: ${result.error}")
+                            nativeCameraLauncher.launch(null)
+                        }
+                    }
                 } catch (e: Exception) {
-                    Log.e("MainActivity", "Failed to launch native camera", e)
-                    postBridgeCallback(callbackId, JSONObject().apply {
-                        put("success", false)
-                        put("error", e.message ?: "Failed to open camera")
-                    }.toString())
+                    Log.e("MainActivity", "Failed to launch CameraX capture, fallback to preview launcher", e)
+                    nativeCameraLauncher.launch(null)
                 }
             } else {
                 requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
@@ -312,6 +320,38 @@ class MainActivity : AppCompatActivity() {
         builtInPrinterManager = BuiltInPrinterManager(this)
         cashDrawerManager = CashDrawerManager(bluetoothManager, networkManager, usbManager)
         barcodeManager = BarcodeScannerManager(this)
+
+        // Initialize CameraX Menu Capture Manager for high-resolution menu photography
+        cameraXManager = CameraXMenuCaptureManager(this) { captureResult ->
+            val cbId = pendingNativeCameraCallbackId
+            pendingNativeCameraCallbackId = null
+            if (cbId != null) {
+                if (captureResult.success && captureResult.dataUrl != null) {
+                    val pageObj = JSONObject().apply {
+                        put("id", "page_cam_${System.currentTimeMillis()}")
+                        put("name", "CameraX Menu Capture ${System.currentTimeMillis() % 1000}")
+                        put("dataUrl", captureResult.dataUrl)
+                        put("mimeType", "image/jpeg")
+                        put("rotation", captureResult.rotationDegrees)
+                        put("timestamp", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date()))
+                        put("fileSize", captureResult.dataUrl.length * 3 / 4)
+                        put("width", captureResult.width)
+                        put("height", captureResult.height)
+                    }
+                    val res = JSONObject().apply {
+                        put("success", true)
+                        put("pages", JSONArray().apply { put(pageObj) })
+                    }
+                    postBridgeCallback(cbId, res.toString())
+                } else {
+                    postBridgeCallback(cbId, JSONObject().apply {
+                        put("success", false)
+                        put("error", captureResult.error ?: "Photo capture cancelled")
+                        put("cancelled", captureResult.error == null)
+                    }.toString())
+                }
+            }
+        }
 
         // 3. Request required Bluetooth permissions on startup
         checkAndRequestPermissions()
