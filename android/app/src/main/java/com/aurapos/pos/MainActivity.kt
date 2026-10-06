@@ -14,17 +14,32 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.webkit.*
 import android.widget.Toast
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
+import android.util.Base64
+import android.util.Log
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewAssetLoader
 import com.aurapos.pos.bridge.NativeBridge
 import com.aurapos.pos.data.LocalDatabaseHelper
 import com.aurapos.pos.device.DeviceManager
 import com.aurapos.pos.hardware.*
+import com.aurapos.pos.ocr.ImagePreprocessor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
 
 /**
  * AuraPOS Native Android Terminal Activity
@@ -97,6 +112,188 @@ class MainActivity : AppCompatActivity() {
 
         if (scanGranted && connectGranted) {
             Toast.makeText(this, "Bluetooth printer permissions granted.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // -------------------------------------------------------------
+    // Native Menu Scanner Image Acquisition (Requirement 2)
+    // -------------------------------------------------------------
+    private var pendingNativeCameraCallbackId: String? = null
+    private var pendingNativeGalleryCallbackId: String? = null
+
+    private val nativeCameraLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        val cbId = pendingNativeCameraCallbackId
+        pendingNativeCameraCallbackId = null
+        if (cbId != null) {
+            if (bitmap != null) {
+                val dataUrl = ImagePreprocessor.toBase64DataUrl(bitmap, 85)
+                val pageObj = JSONObject().apply {
+                    put("id", "page_cam_${System.currentTimeMillis()}")
+                    put("name", "Camera Capture ${System.currentTimeMillis() % 1000}")
+                    put("dataUrl", dataUrl)
+                    put("mimeType", "image/jpeg")
+                    put("rotation", 0)
+                    put("timestamp", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date()))
+                    put("fileSize", dataUrl.length * 3 / 4)
+                }
+                val res = JSONObject().apply {
+                    put("success", true)
+                    put("pages", JSONArray().apply { put(pageObj) })
+                }
+                postBridgeCallback(cbId, res.toString())
+            } else {
+                postBridgeCallback(cbId, JSONObject().apply {
+                    put("success", false)
+                    put("cancelled", true)
+                }.toString())
+            }
+        }
+    }
+
+    private val nativeGalleryLauncher = registerForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        val cbId = pendingNativeGalleryCallbackId
+        pendingNativeGalleryCallbackId = null
+        if (cbId != null) {
+            if (!uris.isNullOrEmpty()) {
+                val pagesArray = JSONArray()
+                uris.forEachIndexed { idx, uri ->
+                    try {
+                        contentResolver.openInputStream(uri)?.use { stream ->
+                            val bitmap = BitmapFactory.decodeStream(stream)
+                            if (bitmap != null) {
+                                val dataUrl = ImagePreprocessor.toBase64DataUrl(bitmap, 85)
+                                pagesArray.put(JSONObject().apply {
+                                    put("id", "page_gal_${System.currentTimeMillis()}_$idx")
+                                    put("name", "Gallery Page ${idx + 1}")
+                                    put("dataUrl", dataUrl)
+                                    put("mimeType", "image/jpeg")
+                                    put("rotation", 0)
+                                    put("timestamp", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date()))
+                                    put("fileSize", dataUrl.length * 3 / 4)
+                                })
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error loading gallery uri: $uri", e)
+                    }
+                }
+                postBridgeCallback(cbId, JSONObject().apply {
+                    put("success", true)
+                    put("pages", pagesArray)
+                }.toString())
+            } else {
+                postBridgeCallback(cbId, JSONObject().apply {
+                    put("success", false)
+                    put("cancelled", true)
+                }.toString())
+            }
+        }
+    }
+
+    fun launchNativeCamera(callbackId: String) {
+        runOnUiThread {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                pendingNativeCameraCallbackId = callbackId
+                try {
+                    nativeCameraLauncher.launch(null)
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Failed to launch native camera", e)
+                    postBridgeCallback(callbackId, JSONObject().apply {
+                        put("success", false)
+                        put("error", e.message ?: "Failed to open camera")
+                    }.toString())
+                }
+            } else {
+                requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                postBridgeCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", "Camera permission requested")
+                }.toString())
+            }
+        }
+    }
+
+    fun launchNativeGallery(allowMultiple: Boolean, callbackId: String) {
+        runOnUiThread {
+            pendingNativeGalleryCallbackId = callbackId
+            try {
+                nativeGalleryLauncher.launch("image/*")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to launch gallery", e)
+                postBridgeCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message ?: "Failed to open gallery")
+                }.toString())
+            }
+        }
+    }
+
+    fun importPdfMenu(base64Pdf: String, callbackId: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val cleanBase64 = base64Pdf.substringAfter("base64,")
+                val pdfBytes = Base64.decode(cleanBase64, Base64.DEFAULT)
+                val tempFile = File.createTempFile("menu_import_", ".pdf", cacheDir)
+                tempFile.writeBytes(pdfBytes)
+
+                val fileDescriptor = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                val pdfRenderer = PdfRenderer(fileDescriptor)
+                val pageCount = pdfRenderer.pageCount
+                val pagesArray = JSONArray()
+
+                for (pageIdx in 0 until pageCount) {
+                    val page = pdfRenderer.openPage(pageIdx)
+                    val targetW = page.width * 2
+                    val targetH = page.height * 2
+                    val bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    canvas.drawColor(Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
+                    page.close()
+
+                    val dataUrl = ImagePreprocessor.toBase64DataUrl(bitmap, 85)
+                    pagesArray.put(JSONObject().apply {
+                        put("id", "page_pdf_${System.currentTimeMillis()}_${pageIdx + 1}")
+                        put("name", "PDF Page ${pageIdx + 1}")
+                        put("dataUrl", dataUrl)
+                        put("mimeType", "image/jpeg")
+                        put("rotation", 0)
+                        put("timestamp", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date()))
+                        put("fileSize", dataUrl.length * 3 / 4)
+                    })
+                }
+
+                pdfRenderer.close()
+                fileDescriptor.close()
+                tempFile.delete()
+
+                postBridgeCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("pages", pagesArray)
+                }.toString())
+            } catch (e: Exception) {
+                Log.e("MainActivity", "PDF import failed: ${e.message}", e)
+                postBridgeCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message ?: "Failed to render PDF menu")
+                }.toString())
+            }
+        }
+    }
+
+    private fun postBridgeCallback(callbackId: String, jsonResult: String) {
+        runOnUiThread {
+            try {
+                val encoded = Base64.encodeToString(jsonResult.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                val js = "try { if (window.__AuraPOSNativeCallbacks && window.__AuraPOSNativeCallbacks['$callbackId']) { window.__AuraPOSNativeCallbacks['$callbackId'](JSON.parse(atob('$encoded'))); } } catch(e) { console.error('Bridge callback delivery error:', e); }"
+                webView.evaluateJavascript(js, null)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error dispatching callback $callbackId: ${e.message}")
+            }
         }
     }
 

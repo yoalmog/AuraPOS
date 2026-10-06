@@ -20,6 +20,9 @@ interface PageManagerProps {
   onPreviewPage: (page: ScannedMenuPage) => void;
   onOpenLiveCamera: () => void;
   onTriggerFileUpload: () => void;
+  onOpenNativeGallery?: () => void;
+  onImportPdf?: () => void;
+  isNativeAndroid?: boolean;
 }
 
 export const PageManager: React.FC<PageManagerProps> = ({
@@ -29,29 +32,53 @@ export const PageManager: React.FC<PageManagerProps> = ({
   onMovePage,
   onPreviewPage,
   onOpenLiveCamera,
-  onTriggerFileUpload
+  onTriggerFileUpload,
+  onOpenNativeGallery,
+  onImportPdf,
+  isNativeAndroid
 }) => {
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold text-slate-900 text-base">
             Scanned Menu Pages ({pages.length})
           </h3>
-          <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-medium border border-blue-200">
-            Multi-page ready
+          <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            {isNativeAndroid ? 'Native On-Device OCR Ready' : 'Local OCR Ready'}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={onOpenLiveCamera}
-            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <Camera className="w-3.5 h-3.5" />
             Camera
           </button>
+          {onOpenNativeGallery && (
+            <button
+              type="button"
+              onClick={onOpenNativeGallery}
+              className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold flex items-center gap-1.5 border border-indigo-200 transition-colors cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Photo Picker / Gallery
+            </button>
+          )}
+          {onImportPdf && (
+            <button
+              type="button"
+              onClick={onImportPdf}
+              className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold flex items-center gap-1.5 border border-amber-200 transition-colors cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              PDF Menu
+            </button>
+          )}
           <label
             htmlFor="menu-global-file-input"
             onClick={onTriggerFileUpload}

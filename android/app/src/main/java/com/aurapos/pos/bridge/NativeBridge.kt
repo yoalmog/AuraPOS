@@ -2,6 +2,7 @@ package com.aurapos.pos.bridge
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.util.Base64
 import android.util.Log
@@ -10,7 +11,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.aurapos.pos.data.LocalDatabaseHelper
 import com.aurapos.pos.hardware.*
+import com.aurapos.pos.ocr.*
 import kotlinx.coroutines.*
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -411,6 +414,135 @@ class NativeBridge(
                     put("errorType", "BACKEND_UNREACHABLE")
                 }
                 postCallback(callbackId, errObj.toString())
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
+    // Native Local-First On-Device Menu Scanner (Requirements 1-9, 15)
+    // -------------------------------------------------------------
+
+    private val localOcrService: LocalOcrService by lazy {
+        MlKitLocalOcrService()
+    }
+
+    @JavascriptInterface
+    fun launchNativeCamera(callbackId: String) {
+        (activity as? com.aurapos.pos.MainActivity)?.launchNativeCamera(callbackId)
+    }
+
+    @JavascriptInterface
+    fun launchNativeGallery(allowMultiple: Boolean, callbackId: String) {
+        (activity as? com.aurapos.pos.MainActivity)?.launchNativeGallery(allowMultiple, callbackId)
+    }
+
+    @JavascriptInterface
+    fun importPdfMenu(base64Pdf: String, callbackId: String) {
+        (activity as? com.aurapos.pos.MainActivity)?.importPdfMenu(base64Pdf, callbackId)
+    }
+
+    @JavascriptInterface
+    fun preprocessImageLocal(base64Image: String, rotationDegrees: Int, callbackId: String) {
+        bridgeScope.launch(Dispatchers.Default) {
+            try {
+                val cleanBase64 = base64Image.substringAfter("base64,")
+                val bytes = Base64.decode(cleanBase64, Base64.DEFAULT)
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    ?: throw IllegalArgumentException("Could not decode image bitmap")
+
+                val preprocessed = ImagePreprocessor.preprocessForOcr(bitmap, rotationDegrees)
+                val originalDataUrl = ImagePreprocessor.toBase64DataUrl(preprocessed.originalBitmap, 85)
+                val ocrDataUrl = ImagePreprocessor.toBase64DataUrl(preprocessed.processedOcrBitmap, 85)
+
+                val res = JSONObject().apply {
+                    put("success", true)
+                    put("originalDataUrl", originalDataUrl)
+                    put("processedOcrDataUrl", ocrDataUrl)
+                    put("width", preprocessed.width)
+                    put("height", preprocessed.height)
+                }
+                postCallback(callbackId, res.toString())
+            } catch (e: Exception) {
+                Log.e("NativeBridge", "preprocessImageLocal error: ${e.message}", e)
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message ?: "Failed to preprocess image")
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun recognizeMenuLocal(base64Image: String, pageNumber: Int, callbackId: String) {
+        bridgeScope.launch(Dispatchers.Default) {
+            val startTime = System.currentTimeMillis()
+            try {
+                val cleanBase64 = base64Image.substringAfter("base64,")
+                val bytes = Base64.decode(cleanBase64, Base64.DEFAULT)
+                val rawBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    ?: throw IllegalArgumentException("Failed to decode image into Bitmap")
+
+                // Step 1: Local Image Preprocessing (preserving original + processed OCR)
+                val preprocessed = ImagePreprocessor.preprocessForOcr(rawBitmap)
+                val processedOcrDataUrl = ImagePreprocessor.toBase64DataUrl(preprocessed.processedOcrBitmap, 80)
+
+                // Step 2: On-Device OCR with Google ML Kit
+                val ocrResult = localOcrService.recognize(preprocessed.processedOcrBitmap, pageNumber)
+
+                // Step 3: Query existing product names for duplicate detection
+                val existingNames = dbHelper.getAllProductNames()
+
+                // Step 4: Spatial Menu Structure & Price Detection Parser
+                val parsedStructure = MenuStructureParser.parseOcrResult(ocrResult, pageNumber, existingNames)
+
+                val totalDuration = System.currentTimeMillis() - startTime
+
+                val responseJson = JSONObject().apply {
+                    put("success", true)
+                    put("source", "native_android_local_ocr")
+                    put("durationMs", totalDuration)
+                    put("detectedCurrency", parsedStructure.detectedCurrency)
+                    put("menuTitle", parsedStructure.menuTitle ?: "Menu Page $pageNumber")
+                    put("processedOcrDataUrl", processedOcrDataUrl)
+                    put("categories", JSONArray().apply {
+                        parsedStructure.categories.forEach { put(it.toJsonObject()) }
+                    })
+                    put("products", JSONArray().apply {
+                        parsedStructure.products.forEach { put(it.toJsonObject()) }
+                    })
+                    put("ocrResult", ocrResult.toJsonObject())
+                }
+
+                postCallback(callbackId, responseJson.toString())
+            } catch (e: Exception) {
+                Log.e("NativeBridge", "recognizeMenuLocal failed: ${e.message}", e)
+                val errObj = JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message ?: "Local on-device OCR recognition failed")
+                    put("durationMs", System.currentTimeMillis() - startTime)
+                }
+                postCallback(callbackId, errObj.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun batchImportToDatabase(payloadJson: String, callbackId: String) {
+        bridgeScope.launch(Dispatchers.IO) {
+            try {
+                val obj = JSONObject(payloadJson)
+                val categories = obj.optJSONArray("categories") ?: JSONArray()
+                val products = obj.optJSONArray("products") ?: JSONArray()
+                val storeId = obj.optString("storeId", "store_aura_main")
+
+                val result = dbHelper.batchImportMenu(categories, products, storeId)
+                postCallback(callbackId, result.toString())
+            } catch (e: Exception) {
+                Log.e("NativeBridge", "batchImportToDatabase failed: ${e.message}", e)
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message ?: "Failed to import menu into local database")
+                }.toString())
             }
         }
     }

@@ -2,7 +2,7 @@
  * AuraPOS - Sample Menu Generator for Testing & Demo
  * Generates crisp 1200x1600 menu page images in high-resolution canvas/JPEG format
  */
-import { ScannedMenuPage } from '../types/menuScanner.ts';
+import { ScannedMenuPage, OcrResult, OcrLine, OcrTextBlock } from '../types/menuScanner.ts';
 
 interface SamplePageConfig {
   pageTitle: string;
@@ -248,6 +248,50 @@ export async function generateSampleMenuPages(): Promise<ScannedMenuPage[]> {
     ctx.lineTo(canvas.width - 80, 215);
     ctx.stroke();
 
+    const ocrLines: OcrLine[] = [];
+
+    // Header title OCR line
+    ocrLines.push({
+      text: cfg.pageTitle,
+      boundingBox: {
+        left: 0.1,
+        top: 70 / canvas.height,
+        right: 0.9,
+        bottom: 105 / canvas.height,
+        width: 0.8,
+        height: 35 / canvas.height
+      },
+      confidence: 0.98
+    });
+
+    // Category banner OCR line
+    ocrLines.push({
+      text: cfg.categoryName,
+      boundingBox: {
+        left: 0.1,
+        top: 135 / canvas.height,
+        right: 0.9,
+        bottom: 175 / canvas.height,
+        width: 0.8,
+        height: 40 / canvas.height
+      },
+      confidence: 0.99
+    });
+
+    // Subtitle OCR line
+    ocrLines.push({
+      text: cfg.subtitle,
+      boundingBox: {
+        left: 0.15,
+        top: 178 / canvas.height,
+        right: 0.85,
+        bottom: 205 / canvas.height,
+        width: 0.7,
+        height: 27 / canvas.height
+      },
+      confidence: 0.95
+    });
+
     // Items list
     let currentY = 270;
     const itemSpacing = 190;
@@ -261,11 +305,54 @@ export async function generateSampleMenuPages(): Promise<ScannedMenuPage[]> {
       ctx.font = 'bold 22px "Inter", Arial, sans-serif';
       ctx.fillText(item.name, 80, currentY);
 
+      const nameMetrics = ctx.measureText(item.name);
+      const nameNormRight = (80 + nameMetrics.width) / canvas.width;
+
       // Price aligned right
       ctx.textAlign = 'right';
       ctx.fillStyle = cfg.accentColor;
       ctx.font = 'bold 22px "Inter", Arial, sans-serif';
       ctx.fillText(item.price, canvas.width - 80, currentY);
+
+      // OCR line for Name + Price
+      ocrLines.push({
+        text: `${item.name} ...... ${item.price}`,
+        boundingBox: {
+          left: 80 / canvas.width,
+          top: (currentY - 24) / canvas.height,
+          right: (canvas.width - 80) / canvas.width,
+          bottom: (currentY + 6) / canvas.height,
+          width: (canvas.width - 160) / canvas.width,
+          height: 30 / canvas.height
+        },
+        elements: [
+          {
+            text: item.name,
+            boundingBox: {
+              left: 80 / canvas.width,
+              top: (currentY - 24) / canvas.height,
+              right: nameNormRight,
+              bottom: (currentY + 6) / canvas.height,
+              width: nameNormRight - 80 / canvas.width,
+              height: 30 / canvas.height
+            },
+            confidence: 0.97
+          },
+          {
+            text: item.price,
+            boundingBox: {
+              left: (canvas.width - 200) / canvas.width,
+              top: (currentY - 24) / canvas.height,
+              right: (canvas.width - 80) / canvas.width,
+              bottom: (currentY + 6) / canvas.height,
+              width: 120 / canvas.width,
+              height: 30 / canvas.height
+            },
+            confidence: 0.98
+          }
+        ],
+        confidence: 0.97
+      });
 
       // Dotted leader line
       ctx.strokeStyle = '#d6d3d1';
@@ -301,11 +388,38 @@ export async function generateSampleMenuPages(): Promise<ScannedMenuPage[]> {
       }
       ctx.fillText(line, 80, lineY);
 
+      // OCR line for Description
+      ocrLines.push({
+        text: item.desc,
+        boundingBox: {
+          left: 80 / canvas.width,
+          top: (currentY + 10) / canvas.height,
+          right: (canvas.width - 80) / canvas.width,
+          bottom: (lineY + 15) / canvas.height,
+          width: (canvas.width - 160) / canvas.width,
+          height: (lineY - currentY + 5) / canvas.height
+        },
+        confidence: 0.94
+      });
+
       // Optional variants / sizes line
       if (item.variants) {
         ctx.fillStyle = '#0369a1';
         ctx.font = 'bold 13px "Inter", Arial, sans-serif';
         ctx.fillText(`★ Tamaños disponibles: ${item.variants}`, 80, lineY + 24);
+
+        ocrLines.push({
+          text: `Tamaños: ${item.variants}`,
+          boundingBox: {
+            left: 80 / canvas.width,
+            top: (lineY + 12) / canvas.height,
+            right: 0.85,
+            bottom: (lineY + 36) / canvas.height,
+            width: 0.77,
+            height: 24 / canvas.height
+          },
+          confidence: 0.92
+        });
       }
 
       currentY += itemSpacing;
@@ -319,14 +433,37 @@ export async function generateSampleMenuPages(): Promise<ScannedMenuPage[]> {
 
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
+    const ocrResult: OcrResult = {
+      fullText: ocrLines.map(l => l.text).join('\n'),
+      lines: ocrLines,
+      textBlocks: [
+        {
+          text: ocrLines.map(l => l.text).join('\n'),
+          boundingBox: { left: 0.05, top: 0.05, right: 0.95, bottom: 0.95, width: 0.9, height: 0.9 },
+          lines: ocrLines,
+          confidence: 0.96,
+          recognizedLanguage: 'es'
+        }
+      ],
+      imageWidth: canvas.width,
+      imageHeight: canvas.height,
+      pageNumber: idx + 1,
+      detectedLanguage: 'es',
+      processingTimeMs: 45
+    };
+
     resultPages.push({
       id: `sample_page_${idx + 1}_${Date.now()}`,
       name: `Menú Pág. ${idx + 1} - ${cfg.categoryName}`,
       dataUrl,
+      processedOcrDataUrl: dataUrl,
       mimeType: 'image/jpeg',
       rotation: 0,
       timestamp: new Date().toISOString(),
-      fileSize: Math.round(dataUrl.length * 0.75)
+      fileSize: Math.round(dataUrl.length * 0.75),
+      ocrResult,
+      width: canvas.width,
+      height: canvas.height
     });
   }
 

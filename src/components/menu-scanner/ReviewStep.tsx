@@ -22,7 +22,8 @@ import {
   Coffee,
   Flame,
   HelpCircle,
-  Copy
+  Copy,
+  RotateCcw
 } from 'lucide-react';
 import {
   ExtractedCategory,
@@ -53,6 +54,10 @@ interface ReviewStepProps {
   onCommitImport: () => void;
   isImporting: boolean;
   currencySymbol: string;
+  onEnhanceWithAi?: () => Promise<void>;
+  isAiEnhancing?: boolean;
+  aiEnhanceNotice?: string | null;
+  onRerunOcr?: () => Promise<void>;
 }
 
 export const ReviewStep: React.FC<ReviewStepProps> = ({
@@ -71,7 +76,11 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
   onBulkSetResolution,
   onCommitImport,
   isImporting,
-  currencySymbol
+  currencySymbol,
+  onEnhanceWithAi,
+  isAiEnhancing,
+  aiEnhanceNotice,
+  onRerunOcr
 }) => {
   const [activeTab, setActiveTab] = useState<'products' | 'categories'>('products');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
@@ -79,6 +88,8 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
   const [showImagePanel, setShowImagePanel] = useState<boolean>(true);
   const [selectedPageIdx, setSelectedPageIdx] = useState<number>(0);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [imageDisplayMode, setImageDisplayMode] = useState<'original' | 'ocr'>('original');
 
   // Editing state for modals/drawers
   const [editingProduct, setEditingProduct] = useState<ExtractedProduct | null>(null);
@@ -152,6 +163,33 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Optional: Improve with AI Button (Requirement 12) */}
+          {onEnhanceWithAi && (
+            <button
+              type="button"
+              onClick={onEnhanceWithAi}
+              disabled={isAiEnhancing || isImporting}
+              className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              title="Enhance categories and descriptions with optional Cloud AI"
+            >
+              <Sparkles className={`w-3.5 h-3.5 text-purple-600 ${isAiEnhancing ? 'animate-spin' : ''}`} />
+              {isAiEnhancing ? 'Enhancing with AI...' : 'Improve with AI (Optional)'}
+            </button>
+          )}
+
+          {/* Re-run OCR Button */}
+          {onRerunOcr && (
+            <button
+              type="button"
+              onClick={onRerunOcr}
+              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium border border-slate-300 flex items-center gap-1.5 transition-colors"
+              title="Re-run on-device OCR"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Re-run OCR
+            </button>
+          )}
+
           {/* Toggle Scanned Image Viewer Button */}
           {pages.length > 0 && (
             <button
@@ -177,16 +215,60 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         </div>
       </div>
 
+      {/* AI Enhancement Fallback Notice (Requirement 12) */}
+      {aiEnhanceNotice && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center justify-between text-xs text-amber-900">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{aiEnhanceNotice}</span>
+          </div>
+          <span className="text-[11px] font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+            Local OCR active
+          </span>
+        </div>
+      )}
+
       {/* Main Content Workspace (Split Layout) */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Side: Original Scanned Image Viewer (Collapsible) */}
+        {/* Left Side: Original Scanned Image Viewer with Visual Traceability (Collapsible) */}
         {showImagePanel && pages.length > 0 && (
-          <div className="w-80 md:w-96 lg:w-[420px] bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 text-white select-none">
-            {/* Image Viewer Header */}
-            <div className="px-4 py-2.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs">
-              <span className="font-semibold text-slate-300">
-                Original Scanned Menu ({pages.length} pages)
-              </span>
+          <div className="w-80 md:w-96 lg:w-[460px] bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 text-white select-none">
+            {/* Image Viewer Header & Controls */}
+            <div className="px-4 py-2.5 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-300">
+                  Menu Page {selectedPageIdx + 1}/{pages.length}
+                </span>
+
+                {/* View Mode Toggle: Original vs Processed OCR */}
+                {pages[selectedPageIdx]?.processedOcrDataUrl && (
+                  <div className="inline-flex rounded-lg bg-slate-800 p-0.5 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setImageDisplayMode('original')}
+                      className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                        imageDisplayMode === 'original'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Original
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImageDisplayMode('ocr')}
+                      className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                        imageDisplayMode === 'ocr'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Preprocessed OCR
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center gap-1">
                 <button
                   type="button"
@@ -206,17 +288,93 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
               </div>
             </div>
 
-            {/* Main Image Display with Pan & Zoom */}
+            {/* Traceability Indicator Bar */}
+            <div className="px-4 py-1.5 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-blue-400" />
+                Tap any product box to trace source
+              </span>
+              {selectedProductId && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedProductId(null)}
+                  className="text-blue-400 hover:underline text-[10px]"
+                >
+                  Clear Selection
+                </button>
+              )}
+            </div>
+
+            {/* Main Image Display with Pan & Zoom + Interactive Bounding Boxes */}
             <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-950">
               <div
                 style={{ transform: `scale(${zoomLevel}) rotate(${pages[selectedPageIdx]?.rotation || 0}deg)` }}
-                className="transition-transform duration-150 origin-center max-w-full"
+                className="transition-transform duration-150 origin-center max-w-full relative inline-block"
               >
                 <img
-                  src={pages[selectedPageIdx]?.dataUrl}
+                  src={
+                    imageDisplayMode === 'ocr' && pages[selectedPageIdx]?.processedOcrDataUrl
+                      ? pages[selectedPageIdx]?.processedOcrDataUrl
+                      : pages[selectedPageIdx]?.dataUrl
+                  }
                   alt={`Scanned Menu Page ${selectedPageIdx + 1}`}
-                  className="rounded-lg shadow-2xl border border-slate-700 max-h-[75vh] object-contain"
+                  className="rounded-lg shadow-2xl border border-slate-700 max-h-[72vh] object-contain block select-none pointer-events-none"
                 />
+
+                {/* Interactive SVG Bounding Box Layer (Requirement 11) */}
+                <svg
+                  className="absolute inset-0 w-full h-full"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                >
+                  {products
+                    .filter(p => (p.sourcePage ? p.sourcePage === selectedPageIdx + 1 : (p.pageIndex || 0) === selectedPageIdx))
+                    .map(product => {
+                      const bbox = product.sourceBoundingBox;
+                      if (!bbox) return null;
+
+                      const isSelected = selectedProductId === product.id || selectedProductId === product.tempId;
+                      const isConflict = product.conflictType !== 'none';
+                      const isLowConfidence = product.isLowConfidence;
+
+                      const strokeColor = isSelected
+                        ? '#3b82f6'
+                        : isConflict
+                        ? '#f59e0b'
+                        : isLowConfidence
+                        ? '#ef4444'
+                        : 'rgba(255, 255, 255, 0.45)';
+
+                      const fillColor = isSelected
+                        ? 'rgba(59, 130, 246, 0.28)'
+                        : 'rgba(255, 255, 255, 0.04)';
+
+                      return (
+                        <g
+                          key={product.id || product.tempId}
+                          className="cursor-pointer transition-all"
+                          onClick={() => {
+                            setSelectedProductId(product.id || product.tempId);
+                            // Scroll product card into view on right side
+                            const el = document.getElementById(`prod-card-${product.id || product.tempId}`);
+                            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }}
+                        >
+                          <rect
+                            x={bbox.left * 100}
+                            y={bbox.top * 100}
+                            width={bbox.width * 100}
+                            height={bbox.height * 100}
+                            fill={fillColor}
+                            stroke={strokeColor}
+                            strokeWidth={isSelected ? 1.2 : 0.6}
+                            strokeDasharray={isSelected ? undefined : '2 1'}
+                            rx="0.8"
+                          />
+                        </g>
+                      );
+                    })}
+                </svg>
               </div>
             </div>
 
@@ -377,16 +535,28 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                   {filteredProducts.map(product => {
                     const hasVariants = product.variants && product.variants.length > 0;
                     const hasModifiers = product.modifiers && product.modifiers.length > 0;
+                    const isSelected = selectedProductId === product.id || selectedProductId === product.tempId;
 
                     return (
                       <div
+                        id={`prod-card-${product.id || product.tempId}`}
                         key={product.id || product.tempId}
-                        className={`bg-white rounded-xl border transition-all p-4 shadow-xs ${
-                          !product.selected
+                        onClick={() => {
+                          setSelectedProductId(product.id || product.tempId);
+                          if (product.sourcePage && product.sourcePage <= pages.length) {
+                            setSelectedPageIdx(product.sourcePage - 1);
+                          } else if (product.pageIndex !== undefined && product.pageIndex < pages.length) {
+                            setSelectedPageIdx(product.pageIndex);
+                          }
+                        }}
+                        className={`rounded-xl border transition-all p-4 shadow-xs cursor-pointer ${
+                          isSelected
+                            ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50/25'
+                            : !product.selected
                             ? 'opacity-60 border-slate-200 bg-slate-50/50'
-                            : product.conflictType !== 'none'
-                            ? 'border-amber-200 hover:border-amber-300'
-                            : 'border-slate-200 hover:border-blue-300'
+                            : product.conflictType !== 'none' || product.duplicateMatch === 'POSSIBLE DUPLICATE'
+                            ? 'bg-white border-amber-200 hover:border-amber-300'
+                            : 'bg-white border-slate-200 hover:border-blue-300'
                         }`}
                       >
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -395,11 +565,14 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                             <input
                               type="checkbox"
                               checked={product.selected}
-                              onChange={e => onUpdateProduct({ ...product, selected: e.target.checked })}
+                              onChange={e => {
+                                e.stopPropagation();
+                                onUpdateProduct({ ...product, selected: e.target.checked });
+                              }}
                               className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500 border-slate-300 mt-1 shrink-0 cursor-pointer"
                             />
 
-                            {/* Product Thumbnail / Placeholder */}
+                            {/* Product Thumbnail / Crop */}
                             {product.imageUrl ? (
                               <img
                                 src={product.imageUrl}
@@ -425,6 +598,29 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                   {product.categoryName}
                                 </span>
 
+                                {/* Duplicate Match Badge (Requirement 9) */}
+                                {product.duplicateMatch && (
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                      product.duplicateMatch === 'MATCH'
+                                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                        : product.duplicateMatch === 'POSSIBLE DUPLICATE'
+                                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    }`}
+                                  >
+                                    {product.duplicateMatch}
+                                  </span>
+                                )}
+
+                                {/* Low Confidence Flag (Requirement 7) */}
+                                {product.isLowConfidence && (
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 text-[10px] font-bold border border-rose-200 flex items-center gap-0.5">
+                                    <AlertTriangle className="w-2.5 h-2.5 text-rose-600" />
+                                    Low Confidence
+                                  </span>
+                                )}
+
                                 {/* Dietary Badges */}
                                 {product.isSpicy && (
                                   <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 text-[10px] font-bold border border-rose-200">
@@ -448,6 +644,22 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                   {product.description}
                                 </p>
                               )}
+
+                              {/* Source Page & Traceability Tag */}
+                              <div className="flex items-center gap-3 mt-1.5 text-[11px] text-slate-500">
+                                {(product.sourcePage || product.pageIndex !== undefined) && (
+                                  <span className="flex items-center gap-1 font-medium text-slate-600">
+                                    <Eye className="w-3 h-3 text-blue-500" />
+                                    Page {product.sourcePage || (product.pageIndex! + 1)}
+                                  </span>
+                                )}
+
+                                {product.warnings && product.warnings.length > 0 && (
+                                  <span className="text-amber-700 font-medium">
+                                    ⚠️ {product.warnings[0]}
+                                  </span>
+                                )}
+                              </div>
 
                               {/* Variants & Modifiers indicators */}
                               {(hasVariants || hasModifiers) && (
@@ -483,7 +695,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
 
                             {/* Conflict Resolution Selector */}
                             {product.conflictType !== 'none' && (
-                              <div className="flex flex-col items-end">
+                              <div className="flex flex-col items-end" onClick={e => e.stopPropagation()}>
                                 <span className="text-[10px] text-amber-700 font-semibold flex items-center gap-1 mb-1">
                                   <AlertTriangle className="w-3 h-3 text-amber-600" />
                                   Match Found
@@ -506,7 +718,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                             )}
 
                             {/* Edit & Delete Buttons */}
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                               <button
                                 type="button"
                                 onClick={() => setEditingProduct(product)}

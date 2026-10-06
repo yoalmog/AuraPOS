@@ -45,6 +45,8 @@ import { MenuScannerImportService } from '../../services/menuScannerImportServic
 import { optimizeImageForOCR } from '../../utils/imageOptimizer.ts';
 import { generateSampleMenuPages } from '../../utils/sampleMenuGenerator.ts';
 import { useAuraNetwork } from '../../hooks/useAuraNetwork.ts';
+import { LocalOcrEngine } from '../../services/ocr/localOcrEngine.ts';
+import { NativeBridgeService } from '../../services/native/NativeBridgeService.ts';
 
 export const MenuScannerView: React.FC = () => {
   const {
@@ -61,6 +63,9 @@ export const MenuScannerView: React.FC = () => {
 
   // Wizard Step State
   const [currentStep, setCurrentStep] = useState<MenuScannerStep>('capture');
+  const [scanProgressText, setScanProgressText] = useState<string>('');
+  const [isAiEnhancing, setIsAiEnhancing] = useState<boolean>(false);
+  const [aiEnhanceNotice, setAiEnhanceNotice] = useState<string | null>(null);
 
   // Scanned pages state with session persistence (Requirement 16 & 23)
   const [pages, setPages] = useState<ScannedMenuPage[]>(() => {
@@ -235,9 +240,59 @@ export const MenuScannerView: React.FC = () => {
   };
 
   // -------------------------------------------------------------
-  // AI Extraction Flow via useAuraNetwork
+  // Native Android & Web Image Acquisition Handlers (Requirement 2)
   // -------------------------------------------------------------
-  const handleStartAnalysis = async () => {
+  const handleNativeCameraLaunch = async () => {
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        const res = await NativeBridgeService.menuScanner.launchNativeCamera();
+        if (res.success && res.pages && res.pages.length > 0) {
+          setPages(prev => [...prev, ...res.pages!]);
+          showToast({
+            type: 'success',
+            title: 'Camera Photo Acquired',
+            message: 'Menu photo added to scanner queue.'
+          });
+          return;
+        }
+      } catch (err: any) {
+        console.warn('Native camera error, falling back to web camera:', err);
+      }
+    }
+    setIsCameraOpen(true);
+  };
+
+  const handleNativeGalleryLaunch = async () => {
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        const res = await NativeBridgeService.menuScanner.launchNativeGallery(true);
+        if (res.success && res.pages && res.pages.length > 0) {
+          setPages(prev => [...prev, ...res.pages!]);
+          showToast({
+            type: 'success',
+            title: 'Gallery Photos Added',
+            message: `Added ${res.pages.length} pages from gallery.`
+          });
+          return;
+        }
+      } catch (err: any) {
+        console.warn('Native gallery error, falling back to file picker:', err);
+      }
+    }
+    fileInputRef.current?.click();
+  };
+
+  const handleImportPdf = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = 'application/pdf,image/*';
+      fileInputRef.current.click();
+    }
+  };
+
+  // -------------------------------------------------------------
+  // PRIMARY ARCHITECTURE: Local-First On-Device Menu Scanner (Requirements 1, 3-9, 13, 14)
+  // -------------------------------------------------------------
+  const handleStartLocalScan = async () => {
     if (pages.length === 0) {
       showToast({
         type: 'warning',
@@ -249,67 +304,116 @@ export const MenuScannerView: React.FC = () => {
 
     try {
       setCurrentStep('analyzing');
+      setScanProgressText('Initializing on-device image preprocessing...');
 
-      const result = await auraNetwork.analyzeMenuWithAi(pages);
-
-      if (!result.success || !result.data) {
-        throw new Error(result.error || 'Failed to extract menu data.');
-      }
-
-      // Reconcile and calculate duplicates / conflict resolutions
-      const processed = MenuScannerImportService.processScanResult(
-        result.data,
+      const { scanResult, updatedPages } = await LocalOcrEngine.scanPagesLocally(
+        pages,
         existingCategories,
-        existingProducts
+        existingProducts,
+        update => setScanProgressText(update.message)
       );
 
-      setExtractedCategories(processed.categories);
-      setExtractedProducts(processed.products);
+      setPages(updatedPages);
+      setExtractedCategories(scanResult.categories);
+      setExtractedProducts(scanResult.products);
       setScanMetadata({
-        title: result.data.menuTitle,
-        notes: result.data.notes
+        title: scanResult.menuTitle,
+        notes: scanResult.notes
       });
 
       setCurrentStep('review');
       showToast({
         type: 'success',
-        title: 'Menu Analyzed Successfully!',
-        message: `Extracted ${processed.products.length} products across ${processed.categories.length} categories.`
+        title: 'Menu Analyzed Locally!',
+        message: `Extracted ${scanResult.products.length} products across ${scanResult.categories.length} categories on-device.`
       });
     } catch (err: any) {
-      console.error('Menu scan error:', err);
+      console.error('Local OCR error:', err);
       setCurrentStep('capture');
-
-      let toastTitle = 'Scan Failed';
-      const currentErrorType = auraNetwork.errorType || (err as any).errorType;
-
-      if (currentErrorType === 'AI_HIGH_DEMAND') toastTitle = 'AI Demand Spike';
-      else if (currentErrorType === 'AI_RATE_LIMIT') toastTitle = 'Rate Limit Reached';
-      else if (currentErrorType === 'NO_INTERNET' || currentErrorType === 'OFFLINE_ERROR') toastTitle = 'Device Offline';
-      else if (currentErrorType === 'BACKEND_TIMEOUT' || currentErrorType === 'TIMEOUT_ERROR') toastTitle = 'Request Timed Out';
-      else if (currentErrorType === 'BACKEND_UNREACHABLE' || currentErrorType === 'NETWORK_ERROR') toastTitle = 'Connection Error';
-      else if (currentErrorType === 'PAYLOAD_TOO_LARGE') toastTitle = 'Payload Too Large';
-
       showToast({
         type: 'error',
-        title: toastTitle,
-        message: auraNetwork.errorMessage || err.message || 'Error processing menu scan.'
+        title: 'Scan Failed',
+        message: err.message || 'Error processing menu scan on-device.'
       });
     }
   };
 
   // -------------------------------------------------------------
-  // Commit to Database
+  // OPTIONAL ENHANCEMENT: Improve with AI (Requirement 12)
+  // -------------------------------------------------------------
+  const handleEnhanceWithAi = async () => {
+    try {
+      setIsAiEnhancing(true);
+      setAiEnhanceNotice(null);
+      showToast({
+        type: 'info',
+        title: 'AI Enhancement',
+        message: 'Querying optional Cloud AI to refine descriptions and category groupings...'
+      });
+
+      const result = await auraNetwork.analyzeMenuWithAi(pages);
+
+      if (result.success && result.data) {
+        const processed = MenuScannerImportService.processScanResult(
+          result.data,
+          existingCategories,
+          existingProducts
+        );
+        setExtractedCategories(processed.categories);
+        setExtractedProducts(processed.products);
+        showToast({
+          type: 'success',
+          title: 'Menu Enhanced!',
+          message: 'AI successfully refined menu categorization and descriptions.'
+        });
+      } else {
+        // Requirement 12: If the AI request fails: DO NOT FAIL THE SCAN. Continue using local OCR results.
+        setAiEnhanceNotice('AI enhancement unavailable. Local OCR results are still available.');
+        showToast({
+          type: 'warning',
+          title: 'AI Unavailable',
+          message: 'AI enhancement unavailable. Local OCR results are preserved.'
+        });
+      }
+    } catch (err: any) {
+      // Requirement 12: DO NOT FAIL THE SCAN. Continue using local OCR results.
+      setAiEnhanceNotice('AI enhancement unavailable. Local OCR results are still available.');
+      showToast({
+        type: 'warning',
+        title: 'AI Unavailable',
+        message: 'AI enhancement unavailable. Local OCR results are preserved.'
+      });
+    } finally {
+      setIsAiEnhancing(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Real Database Transaction (Requirement 15)
   // -------------------------------------------------------------
   const handleCommitImport = async () => {
     try {
       setIsImporting(true);
 
+      // 1. Commit to client persistent database & localStorage
       const summary = await MenuScannerImportService.commitImport(
         extractedCategories,
         extractedProducts,
         'store_aura_main'
       );
+
+      // 2. Commit to Android native SQLite database if running on device
+      if (NativeBridgeService.isNativeAndroid()) {
+        try {
+          await NativeBridgeService.menuScanner.batchImportToDatabase(
+            extractedCategories,
+            extractedProducts,
+            'store_aura_main'
+          );
+        } catch (e) {
+          console.warn('Native SQLite batch import notice:', e);
+        }
+      }
 
       setImportSummary(summary);
       refreshData(); // Synchronize POSContext and state
@@ -569,7 +673,7 @@ export const MenuScannerView: React.FC = () => {
                 <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end flex-wrap">
                   <button
                     type="button"
-                    onClick={handleStartAnalysis}
+                    onClick={handleStartLocalScan}
                     className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
@@ -676,64 +780,74 @@ export const MenuScannerView: React.FC = () => {
               onRemovePage={handleRemovePage}
               onMovePage={handleMovePage}
               onPreviewPage={page => setPreviewPage(page)}
-              onOpenLiveCamera={() => setIsCameraOpen(true)}
+              onOpenLiveCamera={handleNativeCameraLaunch}
+              onOpenNativeGallery={handleNativeGalleryLaunch}
+              onImportPdf={handleImportPdf}
+              isNativeAndroid={NativeBridgeService.isNativeAndroid()}
               onTriggerFileUpload={() => fileInputRef.current?.click()}
             />
           </div>
 
           {/* Bottom Floating Action Bar */}
           {pages.length > 0 && (
-            <div className="sticky bottom-6 bg-slate-900/90 backdrop-blur-md rounded-2xl p-4 text-white shadow-2xl border border-slate-800 flex items-center justify-between gap-4 mt-auto">
+            <div className="sticky bottom-6 bg-slate-900/95 backdrop-blur-md rounded-2xl p-4 text-white shadow-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4 mt-auto">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shadow-xs">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center font-bold text-white shadow-xs">
                   {pages.length}
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold leading-tight">
-                    {pages.length} Menu {pages.length === 1 ? 'Page' : 'Pages'} Ready for AI Extraction
+                  <h4 className="text-sm font-bold leading-tight flex items-center gap-2">
+                    <span>{pages.length} Menu {pages.length === 1 ? 'Page' : 'Pages'} Ready for On-Device Scan</span>
+                    <span className="text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-2 py-0.5 rounded-full">
+                      Offline-First
+                    </span>
                   </h4>
                   <p className="text-xs text-slate-400">
-                    Multimodal OCR will structure items, prices, and categories
+                    Runs 100% on-device with ML Kit OCR & Spatial Layout Parser (no backend needed)
                   </p>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleStartAnalysis}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-95 text-white font-bold text-sm shadow-lg flex items-center gap-2 transition-all cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                Analyze Menu with AI
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Primary Action: Local-First On-Device Scanning */}
+                <button
+                  type="button"
+                  onClick={handleStartLocalScan}
+                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-sm shadow-lg flex items-center gap-2 transition-all cursor-pointer"
+                >
+                  <Zap className="w-4 h-4 text-amber-300" />
+                  Scan Menu Locally (On-Device OCR)
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Step 2: Animated Scanning & AI Extraction */}
+      {/* Step 2: Animated Scanning & On-Device Processing */}
       {currentStep === 'analyzing' && (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-900 text-white select-none">
           <div className="relative mb-8">
             {/* Pulsing Radar Ring */}
-            <div className="w-28 h-28 rounded-full border-4 border-blue-500/40 animate-ping absolute inset-0" />
-            <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-2xl shadow-blue-500/40 relative z-10">
-              <Sparkles className="w-12 h-12 text-white animate-pulse" />
+            <div className="w-28 h-28 rounded-full border-4 border-emerald-500/40 animate-ping absolute inset-0" />
+            <div className="w-28 h-28 rounded-full bg-gradient-to-br from-emerald-600 to-teal-700 flex items-center justify-center shadow-2xl shadow-emerald-500/40 relative z-10">
+              <Zap className="w-12 h-12 text-white animate-pulse" />
             </div>
           </div>
 
-          <h3 className="text-2xl font-black tracking-tight mb-2">Analyzing Menu Structure</h3>
-          <p className="text-sm text-blue-300 font-mono mb-6 max-w-md">
-            {auraNetwork.progressStage || 'Analyzing menu structure...'}
+          <h3 className="text-2xl font-black tracking-tight mb-2">On-Device Menu Scanning</h3>
+          <p className="text-sm text-emerald-300 font-mono mb-6 max-w-md">
+            {scanProgressText || 'Extracting menu text & 2D spatial layout...'}
           </p>
 
           <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden mb-4">
-            <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 animate-pulse w-full rounded-full" />
+            <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 animate-pulse w-full rounded-full" />
           </div>
 
-          <span className="text-xs text-slate-500">
-            Scanning {pages.length} {pages.length === 1 ? 'page' : 'pages'} with Gemini 3 Vision
+          <span className="text-xs text-slate-400 flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            Processing {pages.length} {pages.length === 1 ? 'page' : 'pages'} locally • No Internet required
           </span>
         </div>
       )}
@@ -778,6 +892,10 @@ export const MenuScannerView: React.FC = () => {
           onCommitImport={handleCommitImport}
           isImporting={isImporting}
           currencySymbol={currencySymbol}
+          onEnhanceWithAi={handleEnhanceWithAi}
+          isAiEnhancing={isAiEnhancing}
+          aiEnhanceNotice={aiEnhanceNotice}
+          onRerunOcr={handleStartLocalScan}
         />
       )}
 

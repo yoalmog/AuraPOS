@@ -69,6 +69,15 @@ declare global {
       getDiagnostics: () => string;
       checkBackendHealth?: (targetUrl: string, callbackId: string) => void;
       analyzeMenu?: (payloadJson: string, callbackId: string) => void;
+
+      // Local-First On-Device Menu Scanner (Requirements 1-9, 15)
+      launchNativeCamera?: (callbackId: string) => void;
+      launchNativeGallery?: (allowMultiple: boolean, callbackId: string) => void;
+      importPdfMenu?: (base64Pdf: string, callbackId: string) => void;
+      preprocessImageLocal?: (base64Image: string, rotationDegrees: number, callbackId: string) => void;
+      recognizeMenuLocal?: (base64Image: string, pageNumber: number, callbackId: string) => void;
+      batchImportToDatabase?: (payloadJson: string, callbackId: string) => void;
+
       vibrate?: (durationMs: number) => void;
       announceForAccessibility?: (text: string) => void;
     };
@@ -641,9 +650,118 @@ export class NativeBridgeService {
   };
 
   // --------------------------------------------------------------------------
-  // AI Menu Scanner Native Bridge Forwarder
+  // AI & Local-First Menu Scanner Native Bridge Forwarder (Requirements 1-9, 15)
   // --------------------------------------------------------------------------
   static menuScanner = {
+    hasNativeScanner: (): boolean => {
+      return (
+        NativeBridgeService.isNativeAndroid() &&
+        !!window.AndroidPOSNative?.recognizeMenuLocal
+      );
+    },
+
+    launchNativeCamera: async (): Promise<{
+      success: boolean;
+      pages?: any[];
+      cancelled?: boolean;
+      error?: string;
+    }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.launchNativeCamera) {
+        return { success: false, error: 'Native Android camera is not available in browser mode.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.launchNativeCamera!(callbackId);
+      }, 60000);
+    },
+
+    launchNativeGallery: async (allowMultiple: boolean = true): Promise<{
+      success: boolean;
+      pages?: any[];
+      cancelled?: boolean;
+      error?: string;
+    }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.launchNativeGallery) {
+        return { success: false, error: 'Native Android photo picker is not available in browser mode.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.launchNativeGallery!(allowMultiple, callbackId);
+      }, 60000);
+    },
+
+    importPdfMenu: async (base64Pdf: string): Promise<{
+      success: boolean;
+      pages?: any[];
+      error?: string;
+    }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.importPdfMenu) {
+        return { success: false, error: 'Native Android PDF renderer is not available in browser mode.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.importPdfMenu!(base64Pdf, callbackId);
+      }, 90000);
+    },
+
+    preprocessImageLocal: async (
+      base64Image: string,
+      rotation: number = 0
+    ): Promise<{
+      success: boolean;
+      originalDataUrl?: string;
+      processedOcrDataUrl?: string;
+      width?: number;
+      height?: number;
+      error?: string;
+    }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.preprocessImageLocal) {
+        return { success: false, error: 'Native image preprocessor is not available.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.preprocessImageLocal!(base64Image, rotation, callbackId);
+      }, 30000);
+    },
+
+    recognizeMenuLocal: async (
+      base64Image: string,
+      pageNumber: number = 1
+    ): Promise<{
+      success: boolean;
+      categories?: any[];
+      products?: any[];
+      ocrResult?: any;
+      processedOcrDataUrl?: string;
+      detectedCurrency?: string;
+      menuTitle?: string;
+      error?: string;
+      durationMs?: number;
+    }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.recognizeMenuLocal) {
+        return { success: false, error: 'Native ML Kit OCR is unavailable.' };
+      }
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.recognizeMenuLocal!(base64Image, pageNumber, callbackId);
+      }, 45000);
+    },
+
+    batchImportToDatabase: async (
+      categories: any[],
+      products: any[],
+      storeId: string = 'store_aura_main'
+    ): Promise<{
+      success: boolean;
+      importedCategories?: number;
+      importedProducts?: number;
+      updatedProducts?: number;
+      error?: string;
+    }> => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.batchImportToDatabase) {
+        return { success: false, error: 'Native database import is unavailable.' };
+      }
+      const payload = JSON.stringify({ categories, products, storeId });
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.batchImportToDatabase!(payload, callbackId);
+      }, 30000);
+    },
+
     analyzeMenuViaNative: async (
       payloadJson: string
     ): Promise<{ success: boolean; data?: any; error?: string }> => {

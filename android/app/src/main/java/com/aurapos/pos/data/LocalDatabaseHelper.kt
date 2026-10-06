@@ -221,6 +221,121 @@ class LocalDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE
         db.update("print_jobs", values, "id = ?", arrayOf(id))
     }
 
+    // -------------------------------------------------------------
+    // Menu Scanner Persistent SQLite DAO (Requirement 15)
+    // -------------------------------------------------------------
+
+    fun getAllProductNames(): List<String> {
+        val names = mutableListOf<String>()
+        val db = readableDatabase
+        val cursor = db.rawQuery("SELECT name FROM products WHERE active = 1", null)
+        cursor.use {
+            while (it.moveToNext()) {
+                val n = it.getString(0)
+                if (!n.isNullOrBlank()) names.add(n)
+            }
+        }
+        return names
+    }
+
+    fun batchImportMenu(
+        categoriesArray: org.json.JSONArray,
+        productsArray: org.json.JSONArray,
+        storeId: String = "store_aura_main"
+    ): JSONObject {
+        val db = writableDatabase
+        db.beginTransaction()
+        var importedCategories = 0
+        var importedProducts = 0
+        var updatedProducts = 0
+
+        try {
+            val now = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }.format(java.util.Date())
+
+            val categoryIdMap = mutableMapOf<String, String>()
+
+            for (i in 0 until categoriesArray.length()) {
+                val cat = categoriesArray.getJSONObject(i)
+                val catName = cat.optString("name", "General").trim()
+                val catId = cat.optString("id", "cat_${System.currentTimeMillis()}_$i")
+                val icon = cat.optString("iconName", "Package")
+                val color = cat.optString("color", "#2563EB")
+                val sortOrder = cat.optInt("sortOrder", i + 1)
+
+                categoryIdMap[catName.lowercase()] = catId
+                categoryIdMap[cat.optString("tempId")] = catId
+
+                val values = ContentValues().apply {
+                    put("id", catId)
+                    put("store_id", storeId)
+                    put("name", catName)
+                    put("icon_name", icon)
+                    put("color", color)
+                    put("sort_order", sortOrder)
+                    put("active", 1)
+                }
+                db.insertWithOnConflict("categories", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                importedCategories++
+            }
+
+            for (i in 0 until productsArray.length()) {
+                val prod = productsArray.getJSONObject(i)
+                val prodName = prod.optString("name", "").trim()
+                if (prodName.isEmpty()) continue
+
+                val prodId = prod.optString("id", "prod_${System.currentTimeMillis()}_$i")
+                val catName = prod.optString("categoryName", "General").trim()
+                val catId = categoryIdMap[catName.lowercase()] ?: categoryIdMap[prod.optString("categoryId")] ?: "cat_general"
+                val price = prod.optDouble("price", 0.0)
+                val cost = prod.optDouble("cost", price * 0.35)
+                val sku = prod.optString("sku", "SKU-${System.currentTimeMillis() % 10000}")
+                val barcode = prod.optString("barcode", "")
+                val unit = prod.optString("unit", "item")
+                val resolution = prod.optString("resolution", "create_new")
+
+                val values = ContentValues().apply {
+                    put("id", prodId)
+                    put("store_id", storeId)
+                    put("category_id", catId)
+                    put("name", prodName)
+                    put("sku", sku)
+                    put("barcode", barcode)
+                    put("price", price)
+                    put("cost", cost)
+                    put("unit", unit)
+                    put("track_inventory", 1)
+                    put("stock", 50.0)
+                    put("low_stock_threshold", 10.0)
+                    put("active", 1)
+                    put("updated_at", now)
+                    if (resolution == "create_new") {
+                        put("created_at", now)
+                    }
+                }
+
+                val rowId = db.insertWithOnConflict("products", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                if (resolution == "update_existing") {
+                    updatedProducts++
+                } else {
+                    importedProducts++
+                }
+            }
+
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+
+        return JSONObject().apply {
+            put("success", true)
+            put("importedCategories", importedCategories)
+            put("importedProducts", importedProducts)
+            put("updatedProducts", updatedProducts)
+        }
+    }
+
     companion object {
         const val DATABASE_NAME = "aurapos_pos.db"
         const val DATABASE_VERSION = 1
