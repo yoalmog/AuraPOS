@@ -20,8 +20,8 @@ if (!isSupabaseConfigured) {
 }
 
 // Single centralized Supabase client instance
-export const supabase: SupabaseClient<Database> | null = isSupabaseConfigured
-  ? createClient<Database>(supabaseUrl, supabaseAnonKey, {
+export const supabase: SupabaseClient<any> | null = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,

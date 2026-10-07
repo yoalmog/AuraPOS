@@ -248,6 +248,15 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved || (StorageService.getSettings().language as SupportedLanguage) || 'en';
   });
 
+  // Ensure DOM language and direction are strictly in sync with state on mount & update
+  useEffect(() => {
+    const langOpt = SUPPORTED_LANGUAGES.find(l => l.code === language);
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('lang', language);
+      document.documentElement.setAttribute('dir', langOpt?.dir || 'ltr');
+    }
+  }, [language]);
+
   const [themeColor, setThemeColorState] = useState<ThemeColor>(() => {
     return (StorageService.getSettings().themeColor as ThemeColor) || 'blue';
   });

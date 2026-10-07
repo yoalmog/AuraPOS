@@ -9,6 +9,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { ImportSummary } from '../../types/menuScanner.ts';
+import { usePOS } from '../../context/POSContext.tsx';
 
 interface ImportSummaryModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
   onGoToProducts,
   onScanAnother
 }) => {
+  const { t } = usePOS();
   if (!isOpen || !summary) return null;
 
   return (
@@ -37,10 +39,10 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
           </div>
 
           <h3 className="text-2xl font-black text-slate-900 tracking-tight">
-            Menu Successfully Imported!
+            {t('menuScanner.summaryTitle', 'Menu Successfully Imported!')}
           </h3>
           <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-            All categories, products, prices, and variants have been safely stored in your AuraPOS database.
+            {t('menuScanner.summarySubtitle', 'All categories, products, prices, and variants have been safely stored in your AuraPOS database.')}
           </p>
         </div>
 
@@ -56,7 +58,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
                   {summary.totalImportedProducts + summary.totalUpdatedProducts}
                 </span>
                 <span className="text-xs font-semibold text-slate-600">
-                  {summary.totalImportedProducts} New, {summary.totalUpdatedProducts} Updated
+                  {summary.totalImportedProducts} {t('menuScanner.newBadge', 'New')}, {summary.totalUpdatedProducts} {t('menuScanner.updatedBadge', 'Updated')}
                 </span>
               </div>
             </div>
@@ -70,7 +72,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
                   {summary.totalImportedCategories + summary.totalUpdatedCategories}
                 </span>
                 <span className="text-xs font-semibold text-slate-600">
-                  Categories Synced
+                  {t('menuScanner.categoriesSynced', 'Categories Synced')}
                 </span>
               </div>
             </div>
@@ -80,7 +82,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
           {summary.createdProductNames.length > 0 && (
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
               <span className="text-xs font-bold text-slate-700 block mb-2">
-                Recently Added Items Sample:
+                {t('menuScanner.sampleItemsAdded', 'Recently Added Items Sample:')}
               </span>
               <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
                 {summary.createdProductNames.slice(0, 8).map((name, i) => (
@@ -93,7 +95,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
                 ))}
                 {summary.createdProductNames.length > 8 && (
                   <span className="px-2 py-0.5 rounded-lg bg-slate-200 text-slate-600 text-xs font-semibold">
-                    +{summary.createdProductNames.length - 8} more
+                    +{summary.createdProductNames.length - 8} {t('menuScanner.more', 'more')}
                   </span>
                 )}
               </div>
@@ -109,7 +111,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
             className="flex-1 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <CreditCard className="w-4 h-4" />
-            Go to Point of Sale
+            {t('menuScanner.goToPOS', 'Go to Point of Sale')}
             <ArrowRight className="w-4 h-4" />
           </button>
 
@@ -118,7 +120,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
             onClick={onGoToProducts}
             className="py-3 px-4 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold text-sm transition-all"
           >
-            View Products
+            {t('menuScanner.viewProducts', 'View Products')}
           </button>
 
           <button
@@ -127,7 +129,7 @@ export const ImportSummaryModal: React.FC<ImportSummaryModalProps> = ({
             className="py-3 px-4 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold text-sm transition-all flex items-center justify-center gap-1.5"
           >
             <RotateCcw className="w-4 h-4" />
-            Scan Another
+            {t('menuScanner.scanAnother', 'Scan Another')}
           </button>
         </div>
       </div>

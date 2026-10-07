@@ -8,7 +8,7 @@ export abstract class BaseRepository<
   TInsert = Database['public']['Tables'][TTableName]['Insert'],
   TUpdate = Database['public']['Tables'][TTableName]['Update']
 > {
-  protected client: SupabaseClient<Database>;
+  protected client: SupabaseClient<any>;
   protected tableName: TTableName;
 
   constructor(tableName: TTableName) {
@@ -30,7 +30,7 @@ export abstract class BaseRepository<
     if (!this.isConfigured()) return null;
 
     const { data, error } = await (this.client
-      .from(this.tableName)
+      .from(this.tableName as string)
       .select('*')
       .eq('id', id)
       .single() as any);
@@ -48,7 +48,7 @@ export abstract class BaseRepository<
   async findAll(filter?: Record<string, any>): Promise<TRow[]> {
     if (!this.isConfigured()) return [];
 
-    let query = this.client.from(this.tableName).select('*') as any;
+    let query = this.client.from(this.tableName as string).select('*') as any;
 
     if (filter) {
       Object.entries(filter).forEach(([key, val]) => {
@@ -73,7 +73,7 @@ export abstract class BaseRepository<
     if (!this.isConfigured()) return null;
 
     const { data, error } = await (this.client
-      .from(this.tableName)
+      .from(this.tableName as string)
       .insert(item as any)
       .select()
       .single() as any);
@@ -92,7 +92,7 @@ export abstract class BaseRepository<
     if (!this.isConfigured()) return null;
 
     const { data, error } = await (this.client
-      .from(this.tableName)
+      .from(this.tableName as string)
       .update(updates as any)
       .eq('id', id)
       .select()
@@ -111,10 +111,10 @@ export abstract class BaseRepository<
   async delete(id: string): Promise<boolean> {
     if (!this.isConfigured()) return false;
 
-    const { error } = await this.client
-      .from(this.tableName)
+    const { error } = await (this.client
+      .from(this.tableName as string)
       .delete()
-      .eq('id', id);
+      .eq('id', id) as any);
 
     if (error) {
       console.error(`[${String(this.tableName)}] delete error:`, error.message);

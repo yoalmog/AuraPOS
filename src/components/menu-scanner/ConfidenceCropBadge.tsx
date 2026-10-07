@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Eye, ZoomIn, X, AlertTriangle, CheckCircle, Info } from 'lucide-react';
 import { BoundingBox, ScannedMenuPage } from '../../types/menuScanner.ts';
 import { getCropFromBoundingBox } from '../../utils/cropGenerator.ts';
+import { usePOS } from '../../context/POSContext.tsx';
 
 interface ConfidenceCropBadgeProps {
   confidence?: number;
@@ -19,13 +20,14 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
   confidence = 0.9,
   isLowConfidence = false,
   confidenceLevel,
-  fieldName = 'Campo',
+  fieldName = 'Field',
   fieldValue,
   boundingBox,
   sourcePage = 1,
   pages,
   onCorrectField
 }) => {
+  const { t } = usePOS();
   const [isHovered, setIsHovered] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [cropDataUrl, setCropDataUrl] = useState<string | null>(null);
@@ -75,7 +77,7 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
       text: 'text-emerald-700',
       border: 'border-emerald-200',
       dot: 'bg-emerald-500',
-      label: 'Alta',
+      label: t('menuScanner.confidenceHigh', 'High'),
       icon: CheckCircle
     },
     MEDIUM: {
@@ -83,7 +85,7 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
       text: 'text-amber-800',
       border: 'border-amber-300',
       dot: 'bg-amber-500 animate-pulse',
-      label: 'Media',
+      label: t('menuScanner.confidenceMedium', 'Medium'),
       icon: Info
     },
     LOW: {
@@ -91,7 +93,7 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
       text: 'text-rose-700',
       border: 'border-rose-300',
       dot: 'bg-rose-500 animate-ping',
-      label: 'Baja',
+      label: t('menuScanner.confidenceLow', 'Low'),
       icon: AlertTriangle
     }
   }[effectiveLevel];
@@ -112,13 +114,13 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
           setIsExpanded(prev => !prev);
         }}
         className={`px-2 py-0.5 rounded-md text-[10px] font-bold border transition-all inline-flex items-center gap-1 cursor-pointer select-none ${badgeConfig.bg} ${badgeConfig.text} ${badgeConfig.border} shadow-2xs active:scale-95`}
-        title={`Confianza OCR: ${confPercent}%. Haga clic para ${isExpanded ? 'cerrar' : 'inspeccionar recorte original del menú'}`}
+        title={`${t('menuScanner.ocrConfidence', 'OCR Confidence')}: ${confPercent}%. ${t('menuScanner.clickToInspectCrop', 'Click to inspect original menu crop')}`}
       >
         <span className={`w-1.5 h-1.5 rounded-full ${badgeConfig.dot}`} />
         <span>OCR {confPercent}%</span>
         {effectiveLevel !== 'HIGH' && (
           <span className="opacity-90 underline underline-offset-1 font-semibold">
-            {effectiveLevel === 'LOW' ? 'Verificar' : 'Revisar'}
+            {effectiveLevel === 'LOW' ? t('menuScanner.verify', 'Verify') : t('menuScanner.review', 'Review')}
           </span>
         )}
         <Eye className="w-2.5 h-2.5 opacity-75" />
@@ -133,27 +135,27 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5 text-[11px]">
             <span className="font-semibold text-amber-300 flex items-center gap-1">
               <IconComp className="w-3 h-3 text-amber-400" />
-              Recorte del Menú ({fieldName})
+              {t('menuScanner.cropPreview', 'Menu Crop')} ({fieldName})
             </span>
-            <span className="text-[10px] text-slate-400">Pág. {sourcePage}</span>
+            <span className="text-[10px] text-slate-400">{t('menuScanner.pageLabel', 'Page')} {sourcePage}</span>
           </div>
 
           {cropDataUrl ? (
             <div className="bg-slate-950 rounded-lg overflow-hidden border border-slate-800 p-1 flex items-center justify-center min-h-[50px]">
               <img
                 src={cropDataUrl}
-                alt="Recorte Original"
+                alt={t('menuScanner.cropPreview', 'Original Crop')}
                 className="max-h-24 w-auto object-contain rounded"
               />
             </div>
           ) : (
             <div className="py-3 text-center text-slate-400 text-[11px]">
-              {isLoadingCrop ? 'Cargando recorte...' : 'Haga clic para inspeccionar recorte'}
+              {isLoadingCrop ? t('menuScanner.loadingCrop', 'Loading crop...') : t('menuScanner.clickToInspectCrop', 'Click to inspect crop')}
             </div>
           )}
 
           <div className="mt-1.5 text-[10px] text-slate-400 text-center">
-            Toque para fijar y comparar con el texto reconocido
+            {t('menuScanner.cropTip', 'Tap to pin and compare with recognized text')}
           </div>
         </div>
       )}
@@ -179,10 +181,10 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-slate-900 leading-tight">
-                    Verificación de OCR Manual
+                    {t('menuScanner.manualOcrVerification', 'Manual OCR Verification')}
                   </h4>
                   <p className="text-[11px] text-slate-500">
-                    {fieldName}: Confianza {confPercent}% ({badgeConfig.label})
+                    {fieldName}: {t('menuScanner.confidence', 'Confidence')} {confPercent}% ({badgeConfig.label})
                   </p>
                 </div>
               </div>
@@ -201,7 +203,7 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
               {/* Field Value Display */}
               <div>
                 <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                  Texto Reconocido por OCR ({fieldName})
+                  {t('menuScanner.ocrRecognizedText', 'OCR Recognized Text')} ({fieldName})
                 </label>
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-sm font-semibold text-slate-800">
                   {fieldValue !== undefined ? String(fieldValue) : '—'}
@@ -211,25 +213,25 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
               {/* Original Menu Crop Preview */}
               <div>
                 <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                  Recorte Fotográfico Original del Menú (Página {sourcePage})
+                  {t('menuScanner.originalMenuCrop', 'Original Menu Photo Crop')} ({t('menuScanner.pageLabel', 'Page')} {sourcePage})
                 </label>
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center min-h-[120px] max-h-56 overflow-hidden">
                   {cropDataUrl ? (
                     <img
                       src={cropDataUrl}
-                      alt="Recorte Original Menú"
+                      alt={t('menuScanner.originalMenuCrop', 'Original Menu Crop')}
                       className="max-h-48 w-auto object-contain rounded shadow"
                     />
                   ) : (
                     <div className="text-xs text-slate-400">
-                      {isLoadingCrop ? 'Generando recorte de alta resolución...' : 'Recorte no disponible'}
+                      {isLoadingCrop ? t('menuScanner.generatingHighResCrop', 'Generating high-resolution crop...') : t('menuScanner.cropUnavailable', 'Crop not available')}
                     </div>
                   )}
                 </div>
               </div>
 
               <div className="text-xs text-slate-500 bg-blue-50/70 p-3 rounded-xl border border-blue-100 leading-relaxed">
-                💡 <span className="font-semibold text-blue-900">Consejo de verificación:</span> Compare el recorte de la fotografía con el texto digitalizado. Puede editar el campo directamente o aceptarlo tal cual.
+                💡 <span className="font-semibold text-blue-900">{t('menuScanner.verificationTipTitle', 'Verification tip:')}</span> {t('menuScanner.verificationTipBody', 'Compare the photograph crop with the digitized text. You can edit fields directly or accept them as is.')}
               </div>
             </div>
 
@@ -240,7 +242,7 @@ export const ConfidenceCropBadge: React.FC<ConfidenceCropBadgeProps> = ({
                 onClick={() => setIsExpanded(false)}
                 className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
               >
-                Entendido / Cerrar
+                {t('common.close', 'Understood / Close')}
               </button>
             </div>
           </div>

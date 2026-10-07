@@ -56,7 +56,9 @@ export const MenuScannerView: React.FC = () => {
     refreshData,
     showToast,
     settings,
-    setActiveRoute
+    setActiveRoute,
+    t,
+    language
   } = usePOS();
 
   // Network Hook: Centralized request lifecycle, pre-flight health checks, diagnostic logging
@@ -118,8 +120,8 @@ export const MenuScannerView: React.FC = () => {
     const fileList = Array.from(files);
     showToast({
       type: 'info',
-      title: 'Analizando Páginas',
-      message: `Detectando orientación y optimizando ${fileList.length} ${fileList.length === 1 ? 'página' : 'páginas'}...`
+      title: t('menuScanner.analyzingPages', 'Analyzing Pages'),
+      message: t('menuScanner.detectingOrientation', `Detecting orientation and optimizing ${fileList.length} pages...`, { count: fileList.length })
     });
 
     for (let idx = 0; idx < fileList.length; idx++) {
@@ -135,7 +137,7 @@ export const MenuScannerView: React.FC = () => {
 
               const newPage: ScannedMenuPage = {
                 id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-                name: file.name || `Página ${pages.length + idx + 1}`,
+                name: file.name || `${t('menuScanner.pageLabel', 'Page {number}', { number: pages.length + idx + 1 })}`,
                 dataUrl: orientResult.correctedDataUrl,
                 originalDataUrl: orientResult.originalDataUrl,
                 correctedDataUrl: orientResult.correctedDataUrl,
@@ -156,14 +158,14 @@ export const MenuScannerView: React.FC = () => {
               if (orientResult.detectedRotation !== 0) {
                 showToast({
                   type: 'info',
-                  title: 'Orientación Corregida',
-                  message: `Se corrigió automáticamente la orientación de ${file.name || 'la página'} (${orientResult.detectedRotation}° CW).`
+                  title: t('menuScanner.orientationCorrected', 'Orientation Corrected'),
+                  message: t('menuScanner.orientationCorrectedMsg', `Auto-corrected orientation for ${file.name || 'page'} (${orientResult.detectedRotation}° CW).`, { name: file.name || 'page', degrees: orientResult.detectedRotation })
                 });
               }
             } catch (err) {
               const newPage: ScannedMenuPage = {
                 id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-                name: file.name || `Página ${pages.length + idx + 1}`,
+                name: file.name || `${t('menuScanner.pageLabel', 'Page {number}', { number: pages.length + idx + 1 })}`,
                 dataUrl: reader.result as string,
                 originalDataUrl: reader.result as string,
                 correctedDataUrl: reader.result as string,
@@ -184,8 +186,8 @@ export const MenuScannerView: React.FC = () => {
 
     showToast({
       type: 'success',
-      title: 'Páginas Listas',
-      message: `${fileList.length} ${fileList.length === 1 ? 'página' : 'páginas'} listas para escaneo OCR.`
+      title: t('menuScanner.pagesReady', 'Pages Ready'),
+      message: t('menuScanner.pagesReadyMsg', `${fileList.length} pages ready for OCR recognition.`, { count: fileList.length })
     });
   };
 

@@ -16,6 +16,7 @@ import {
 import { ScannedMenuPage } from '../../types/menuScanner.ts';
 import { NativeBridgeService } from '../../services/native/NativeBridgeService.ts';
 import { ImageOrientationService } from '../../services/ocr/imageOrientationService.ts';
+import { usePOS } from '../../context/POSContext.tsx';
 
 interface CameraCaptureModalProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   onPagesCaptured,
   existingPagesCount
 }) => {
+  const { t } = usePOS();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -103,14 +105,14 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
       console.warn('Camera access error:', err);
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
         setPermissionState('denied');
-        setCameraError('Permiso de Cámara Denegado: Conceda acceso a la cámara en los permisos de su dispositivo o navegador para escanear el menú.');
+        setCameraError(t('menuScanner.cameraPermissionDenied', 'Camera Permission Denied: Please grant camera access in your device settings.'));
       } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-        setCameraError('No se encontró ninguna cámara disponible en el dispositivo.');
+        setCameraError(t('menuScanner.cameraNotFound', 'No available camera was found on this device.'));
       } else {
-        setCameraError('No se pudo iniciar la cámara de alta resolución. Puede subir fotos directamente o utilizar la galería.');
+        setCameraError(t('menuScanner.cameraStartFailed', 'Could not start camera. You can upload photos or use gallery.'));
       }
     }
-  }, [stream]);
+  }, [stream, t]);
 
   useEffect(() => {
     if (isOpen) {
@@ -138,7 +140,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
         if (res.success && res.pages && res.pages.length > 0) {
           const formatted = res.pages.map((p: any, idx: number) => ({
             id: p.id || `page_camerax_${Date.now()}_${idx}`,
-            name: p.name || `Página de Menú ${existingPagesCount + capturedPages.length + idx + 1}`,
+            name: p.name || `${t('menuScanner.pageLabel', 'Page {number}', { number: existingPagesCount + capturedPages.length + idx + 1 })}`,
             dataUrl: p.dataUrl,
             originalDataUrl: p.dataUrl,
             correctedDataUrl: p.dataUrl,
@@ -211,7 +213,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
 
       const newPage: ScannedMenuPage = {
         id: `page_${Date.now()}_${capturedPages.length}`,
-        name: `Página ${existingPagesCount + capturedPages.length + 1}`,
+        name: `${t('menuScanner.pageLabel', 'Page {number}', { number: existingPagesCount + capturedPages.length + 1 })}`,
         dataUrl: orientResult.correctedDataUrl,
         originalDataUrl: orientResult.originalDataUrl,
         correctedDataUrl: orientResult.correctedDataUrl,
@@ -232,7 +234,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
       console.warn('Orientation analysis fallback:', e);
       const fallbackPage: ScannedMenuPage = {
         id: `page_${Date.now()}_${capturedPages.length}`,
-        name: `Página ${existingPagesCount + capturedPages.length + 1}`,
+        name: `${t('menuScanner.pageLabel', 'Page {number}', { number: existingPagesCount + capturedPages.length + 1 })}`,
         dataUrl: rawDataUrl,
         originalDataUrl: rawDataUrl,
         correctedDataUrl: rawDataUrl,
@@ -268,13 +270,17 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-base leading-tight">Cámara de Menú de Alta Resolución</h3>
+                <h3 className="font-semibold text-base leading-tight">
+                  {t('menuScanner.cameraTitle', 'Menu Camera')}
+                </h3>
                 <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                  {isNativeAndroid ? 'CameraX Nativo' : 'Cámara Web Activa'}
+                  {isNativeAndroid ? 'CameraX Native' : t('header.online', 'Live Camera')}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">Capture el menú plano con buena iluminación. Detección OpenCV y OCR en Español activos.</p>
+              <p className="text-xs text-slate-400">
+                {t('menuScanner.subtitle', 'Import physical printed menus into your catalog automatically')}
+              </p>
             </div>
           </div>
 
@@ -284,10 +290,10 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                 type="button"
                 onClick={handleLaunchNativeCameraX}
                 className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Abrir Cámara Nativa Android con CameraX"
+                title="CameraX"
               >
                 <Smartphone className="w-3.5 h-3.5" />
-                CameraX Nativo
+                CameraX
               </button>
             )}
 
@@ -300,7 +306,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                     ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
                     : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
                 }`}
-                title="Linterna / Flash"
+                title={isTorchOn ? t('menuScanner.flashOn', 'Flash On') : t('menuScanner.flashOff', 'Flash Off')}
               >
                 {isTorchOn ? <Zap className="w-4 h-4" /> : <ZapOff className="w-4 h-4" />}
               </button>
@@ -310,7 +316,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               type="button"
               onClick={toggleCameraFacing}
               className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition-colors"
-              title="Cambiar Cámara (Frontal / Trasera)"
+              title={t('menuScanner.switchCamera', 'Switch Camera')}
             >
               <SwitchCamera className="w-4 h-4" />
             </button>
@@ -319,6 +325,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               type="button"
               onClick={onClose}
               className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+              title={t('menuScanner.close', 'Close')}
             >
               <X className="w-4 h-4" />
             </button>
@@ -330,7 +337,9 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
           {cameraError ? (
             <div className="text-center p-8 max-w-md">
               <AlertCircle className="w-12 h-12 text-amber-400 mx-auto mb-3" />
-              <h4 className="text-lg font-semibold text-white mb-2">Cámara No Disponible</h4>
+              <h4 className="text-lg font-semibold text-white mb-2">
+                {t('menuScanner.cameraNotFound', 'Camera Unavailable')}
+              </h4>
               <p className="text-sm text-slate-300 mb-6 leading-relaxed">{cameraError}</p>
 
               <div className="flex flex-wrap items-center justify-center gap-3">
@@ -340,7 +349,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer"
                 >
                   <RotateCcw className="w-4 h-4" />
-                  Reintentar Permiso y Cámara
+                  {t('common.retry', 'Retry')}
                 </button>
 
                 {isNativeAndroid && (
@@ -350,13 +359,13 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer"
                   >
                     <Smartphone className="w-4 h-4" />
-                    Abrir CameraX Nativo
+                    CameraX
                   </button>
                 )}
 
                 <label className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 rounded-xl text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer">
                   <Camera className="w-4 h-4 text-blue-400" />
-                  Subir Foto de Menú
+                  {t('menuScanner.uploadPhoto', 'Upload Photo')}
                   <input
                     type="file"
                     accept="image/*,application/pdf"
@@ -373,7 +382,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                               const orient = await ImageOrientationService.analyzeAndCorrect(reader.result);
                               const newPage: ScannedMenuPage = {
                                 id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-                                name: file.name || `Página ${existingPagesCount + capturedPages.length + idx + 1}`,
+                                name: file.name || `${t('menuScanner.pageLabel', 'Page {number}', { number: existingPagesCount + capturedPages.length + idx + 1 })}`,
                                 dataUrl: orient.correctedDataUrl,
                                 originalDataUrl: orient.originalDataUrl,
                                 correctedDataUrl: orient.correctedDataUrl,
@@ -390,7 +399,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                             } catch {
                               const fallbackPage: ScannedMenuPage = {
                                 id: `page_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
-                                name: file.name || `Página ${existingPagesCount + capturedPages.length + idx + 1}`,
+                                name: file.name || `${t('menuScanner.pageLabel', 'Page {number}', { number: existingPagesCount + capturedPages.length + idx + 1 })}`,
                                 dataUrl: reader.result as string,
                                 originalDataUrl: reader.result as string,
                                 correctedDataUrl: reader.result as string,
@@ -436,7 +445,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
 
                 <div className="text-center">
                   <span className="bg-slate-950/75 backdrop-blur-sm text-blue-300 text-xs px-3 py-1.5 rounded-full font-medium shadow-md border border-blue-500/30">
-                    Alinee el menú dentro de los bordes (detección OpenCV activa)
+                    {t('menuScanner.dropImagesHere', 'Align menu within borders')}
                   </span>
                 </div>
 
@@ -468,7 +477,9 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               </div>
             ))}
             {capturedPages.length === 0 && (
-              <span className="text-xs text-slate-500 italic">Ninguna página capturada aún</span>
+              <span className="text-xs text-slate-500 italic">
+                {t('menuScanner.noPagesYet', 'No pages captured yet')}
+              </span>
             )}
           </div>
 
@@ -479,7 +490,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               onClick={handleSnap}
               disabled={!!cameraError || isProcessingFrame}
               className="w-16 h-16 rounded-full bg-white hover:bg-slate-100 active:scale-95 disabled:opacity-40 text-slate-900 flex items-center justify-center shadow-lg border-4 border-slate-700 transition-all cursor-pointer"
-              title="Tomar Foto de Alta Resolución"
+              title={t('menuScanner.takePhoto', 'Take Photo')}
             >
               <div className="w-12 h-12 rounded-full border-2 border-slate-900 flex items-center justify-center">
                 <Camera className="w-6 h-6 text-slate-900" />
@@ -496,7 +507,9 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-medium text-sm transition-all shadow-md flex items-center gap-2 cursor-pointer"
             >
               <Check className="w-4 h-4" />
-              Usar {capturedPages.length} {capturedPages.length === 1 ? 'Página' : 'Páginas'}
+              {capturedPages.length === 1
+                ? t('menuScanner.useOnePage', 'Use 1 Page')
+                : t('menuScanner.usePages', `Use ${capturedPages.length} Pages`, { count: capturedPages.length })}
             </button>
           </div>
         </div>

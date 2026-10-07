@@ -41,6 +41,7 @@ import { CATEGORY_ICON_MAP } from '../pos/CategoryPanel.tsx';
 import { ProductAiImageStudio } from './ProductAiImageStudio.tsx';
 import { BatchAiImageModal } from './BatchAiImageModal.tsx';
 import { ConfidenceCropBadge } from './ConfidenceCropBadge.tsx';
+import { usePOS } from '../../context/POSContext.tsx';
 
 interface ReviewStepProps {
   categories: ExtractedCategory[];
@@ -95,6 +96,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
   onRotatePageLeft,
   onResetPageOrientation
 }) => {
+  const { t } = usePOS();
   const [activeTab, setActiveTab] = useState<'products' | 'categories'>('products');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -152,10 +154,10 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
           <div>
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-blue-600" />
-              Revisión e Importación del Menú
+              {t('menuScanner.reviewTitle', 'Review Extracted Catalog')}
             </h2>
             <p className="text-xs text-slate-500">
-              Verifique platos, categorías y genere fotos con IA antes de guardar en el catálogo
+              {t('menuScanner.reviewDesc', 'Verify extracted categories, item names, prices, and variants before saving.')}
             </p>
           </div>
 
@@ -164,19 +166,19 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
           {/* Quick Metrics Badges */}
           <div className="hidden lg:flex items-center gap-3 text-xs">
             <div className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-semibold">
-              {selectedProductsCount} Platos Listos
+              {t('menuScanner.productsTab', `Products (${selectedProductsCount})`, { count: selectedProductsCount })}
             </div>
             <div className="px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-200 text-purple-700 font-semibold flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-              {aiImagesCount} Fotos IA
+              {aiImagesCount} AI Photos
             </div>
             <div className="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 font-semibold">
-              {selectedCategoriesCount} Categorías
+              {t('menuScanner.categoriesTab', `Categories (${selectedCategoriesCount})`, { count: selectedCategoriesCount })}
             </div>
             {conflictedProductsCount > 0 && (
               <div className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 font-semibold flex items-center gap-1">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                {conflictedProductsCount} Coincidencias Previas
+                {conflictedProductsCount} Existing Matches
               </div>
             )}
           </div>
@@ -188,10 +190,10 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
             type="button"
             onClick={() => setIsBatchModalOpen(true)}
             className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
-            title="Generar fotografías profesionales con IA para múltiples productos"
+            title="Batch AI Image Generation"
           >
             <Sparkles className="w-3.5 h-3.5 text-purple-200" />
-            Generar Imágenes con IA
+            {t('menuScanner.enhanceAi', 'AI Menu Enricher')}
           </button>
 
           {/* Toggle Scanned Image Viewer Button */}
@@ -202,7 +204,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
               className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium border border-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               {showImagePanel ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
-              {showImagePanel ? 'Ocultar Foto del Menú' : 'Ver Foto del Menú'}
+              {showImagePanel ? t('common.hideImage', 'Hide Menu Image') : t('common.viewImage', 'View Menu Image')}
             </button>
           )}
 
@@ -214,7 +216,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
             className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold shadow-md flex items-center gap-2 transition-all cursor-pointer"
           >
             <CheckCircle2 className="w-4 h-4" />
-            {isImporting ? 'Guardando...' : `Importar ${selectedProductsCount} Productos al Catálogo`}
+            {isImporting ? t('menuScanner.importing', 'Importing...') : t('menuScanner.commitImport', 'Confirm & Import to Catalog')}
           </button>
         </div>
       </div>
@@ -228,7 +230,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
             <div className="px-4 py-2.5 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-slate-300">
-                  Página {selectedPageIdx + 1}/{pages.length}
+                  {t('menuScanner.pageLabel', `Page ${selectedPageIdx + 1}`, { number: selectedPageIdx + 1 })}/{pages.length}
                 </span>
 
                 {/* Requirement 3: Show "Original" and "Corrected for scanning" */}
@@ -242,7 +244,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    Corregida
+                    {t('menuScanner.correctedImage', 'Corrected')}
                   </button>
                   <button
                     type="button"
@@ -253,7 +255,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    Original
+                    {t('menuScanner.originalImage', 'Original')}
                   </button>
                 </div>
               </div>
@@ -265,7 +267,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     type="button"
                     onClick={() => onRotatePageLeft(currentPage.id)}
                     className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-                    title="Girar 90° a la Izquierda"
+                    title={t('menuScanner.rotateLeft', 'Rotate Left')}
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                   </button>
@@ -275,7 +277,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     type="button"
                     onClick={() => onRotatePageRight(currentPage.id)}
                     className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-                    title="Girar 90° a la Derecha"
+                    title={t('menuScanner.rotateRight', 'Rotate Right')}
                   >
                     <RotateCw className="w-3.5 h-3.5" />
                   </button>
@@ -285,7 +287,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     type="button"
                     onClick={() => onResetPageOrientation(currentPage.id)}
                     className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                    title="Restablecer Orientación"
+                    title={t('menuScanner.resetOrientation', 'Reset Orientation')}
                   >
                     <Undo2 className="w-3.5 h-3.5" />
                   </button>
@@ -340,7 +342,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                       ? currentPage?.originalDataUrl || currentPage?.dataUrl
                       : currentPage?.correctedDataUrl || currentPage?.dataUrl
                   }
-                  alt={`Menú Página ${selectedPageIdx + 1}`}
+                  alt={`${t('menuScanner.pageLabel', 'Menu Page')} ${selectedPageIdx + 1}`}
                   className="rounded-lg shadow-2xl border border-slate-700 max-h-[72vh] object-contain block select-none pointer-events-none"
                 />
 
@@ -387,7 +389,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                         : 'bg-slate-800 text-slate-400 hover:text-white'
                     }`}
                   >
-                    Página {idx + 1}
+                    {t('menuScanner.pageLabel', `Page ${idx + 1}`, { number: idx + 1 })}
                   </button>
                 ))}
               </div>
@@ -410,7 +412,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                Platos del Menú ({products.length})
+                {t('menuScanner.productsTab', `Products (${products.length})`, { count: products.length })}
               </button>
               <button
                 type="button"
@@ -421,7 +423,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                Categorías ({categories.length})
+                {t('menuScanner.categoriesTab', `Categories (${categories.length})`, { count: categories.length })}
               </button>
             </div>
 
@@ -433,7 +435,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
                     <input
                       type="text"
-                      placeholder="Buscar plato o ingrediente..."
+                      placeholder={t('menuScanner.searchItems', 'Search extracted items...')}
                       value={searchTerm}
                       onChange={e => setSearchTerm(e.target.value)}
                       className="pl-8 pr-3 py-1.5 text-xs bg-slate-100 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none w-48 sm:w-60"
@@ -445,7 +447,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     onChange={e => setSelectedCategoryFilter(e.target.value)}
                     className="py-1.5 px-3 text-xs bg-slate-100 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   >
-                    <option value="all">Todas las Categorías</option>
+                    <option value="all">{t('menuScanner.allCategories', 'All Categories')}</option>
                     {categories.map(c => (
                       <option key={c.id || c.tempId} value={c.name}>
                         {c.name}
@@ -457,10 +459,10 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     type="button"
                     onClick={() => setIsAddProductModalOpen(true)}
                     className="p-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold border border-blue-200 flex items-center gap-1 cursor-pointer"
-                    title="Agregar Plato Manualmente"
+                    title={t('menuScanner.addItem', 'Add Item')}
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Agregar</span>
+                    <span>{t('menuScanner.addItem', 'Add Item')}</span>
                   </button>
                 </>
               )}
@@ -472,7 +474,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                   className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  Nueva Categoría
+                  {t('menuScanner.addCategory', 'Add Category')}
                 </button>
               )}
             </div>
@@ -485,35 +487,35 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                 <button
                   type="button"
                   onClick={() => onBulkSelectProducts(true)}
-                  className="hover:text-blue-600 font-medium"
+                  className="hover:text-blue-600 font-medium cursor-pointer"
                 >
-                  Seleccionar Todos
+                  {t('common.selectAll', 'Select All')}
                 </button>
                 <span>•</span>
                 <button
                   type="button"
                   onClick={() => onBulkSelectProducts(false)}
-                  className="hover:text-blue-600 font-medium"
+                  className="hover:text-blue-600 font-medium cursor-pointer"
                 >
-                  Deseleccionar Todos
+                  {t('common.deselectAll', 'Deselect All')}
                 </button>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-slate-500">Acción Masiva Coincidencias:</span>
+                <span className="text-slate-500">{t('menuScanner.conflictAction', 'Import Action')}:</span>
                 <button
                   type="button"
                   onClick={() => onBulkSetResolution('update_existing')}
-                  className="px-2 py-0.5 rounded bg-white hover:bg-slate-200 border border-slate-300 font-medium text-slate-700"
+                  className="px-2 py-0.5 rounded bg-white hover:bg-slate-200 border border-slate-300 font-medium text-slate-700 cursor-pointer"
                 >
-                  Actualizar Existentes
+                  {t('menuScanner.conflictUpdate', 'Update Existing')}
                 </button>
                 <button
                   type="button"
                   onClick={() => onBulkSetResolution('create_new')}
-                  className="px-2 py-0.5 rounded bg-white hover:bg-slate-200 border border-slate-300 font-medium text-slate-700"
+                  className="px-2 py-0.5 rounded bg-white hover:bg-slate-200 border border-slate-300 font-medium text-slate-700 cursor-pointer"
                 >
-                  Crear Nuevo
+                  {t('menuScanner.conflictCreateNew', 'Create New')}
                 </button>
               </div>
             </div>
@@ -671,7 +673,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                 {(product.sourcePage || product.pageIndex !== undefined) && (
                                   <span className="flex items-center gap-1 font-medium text-slate-600">
                                     <Eye className="w-3 h-3 text-blue-500" />
-                                    Página {product.sourcePage || (product.pageIndex! + 1)}
+                                    {t('menuScanner.pageLabel', 'Page')} {product.sourcePage || (product.pageIndex! + 1)}
                                   </span>
                                 )}
 

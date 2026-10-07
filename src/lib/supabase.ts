@@ -19,7 +19,7 @@ if (!isSupabaseConfigured) {
 }
 
 // Centralized Supabase client instance
-export const supabase: SupabaseClient<Database> = createClient<Database>(
+export const supabase: SupabaseClient<any> = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
   supabaseAnonKey || 'placeholder-anon-key',
   {
