@@ -142,7 +142,7 @@ export const MenuScannerView: React.FC = () => {
                 originalDataUrl: orientResult.originalDataUrl,
                 correctedDataUrl: orientResult.correctedDataUrl,
                 processedOcrDataUrl: orientResult.processedOcrDataUrl,
-                rotation: orientResult.detectedRotation,
+                rotation: 0, // correctedDataUrl already has any rotation baked in; this holds only manual user rotation
                 autoRotationApplied: orientResult.detectedRotation,
                 deskewAngle: orientResult.deskewAngle,
                 activeDisplayTab: 'corrected',
@@ -357,7 +357,8 @@ export const MenuScannerView: React.FC = () => {
   };
 
   // -------------------------------------------------------------
-  // PRIMARY ARCHITECTURE: Local-First On-Device Menu Scanner (Requirements 1, 3-9, 13, 14)
+  // -------------------------------------------------------------
+  // PRIMARY ARCHITECTURE: Online AI Menu Scanner with Local OCR Fallback
   // -------------------------------------------------------------
   const handleStartLocalScan = async () => {
     if (pages.length === 0) {
@@ -369,8 +370,54 @@ export const MenuScannerView: React.FC = () => {
       return;
     }
 
+    setCurrentStep('analyzing');
+
+    // a) If navigator is online, call auraNetwork.analyzeMenuWithAi first
+    const isOnline = typeof navigator === 'undefined' || navigator.onLine;
+    if (isOnline) {
+      try {
+        const result = await auraNetwork.analyzeMenuWithAi(pages, stage => setScanProgressText(stage));
+
+        if (result.success && result.data && result.data.products && result.data.products.length > 0) {
+          const processed = MenuScannerImportService.processScanResult(
+            result.data,
+            existingCategories,
+            existingProducts
+          );
+          setExtractedCategories(processed.categories);
+          setExtractedProducts(processed.products);
+          setScanMetadata({
+            title: result.data.menuTitle || '',
+            notes: result.data.notes || ''
+          });
+          setCurrentStep('review');
+          showToast({
+            type: 'success',
+            title: 'Menu Analyzed!',
+            message: `Extracted ${processed.products.length} products across ${processed.categories.length} categories.`
+          });
+          return;
+        } else if (result.success) {
+          setCurrentStep('capture');
+          showToast({
+            type: 'warning',
+            title: 'No products found',
+            message: result.data?.notes || 'Retake the photo straight-on with good light'
+          });
+          return;
+        }
+      } catch (aiErr: any) {
+        console.warn('AI scan failed or unavailable, continuing to local fallback:', aiErr);
+        showToast({
+          type: 'warning',
+          title: 'AI scan unavailable',
+          message: aiErr?.message || 'Falling back to on-device scan...'
+        });
+      }
+    }
+
+    // b) FALLBACK: On-device LocalOcrEngine flow
     try {
-      setCurrentStep('analyzing');
       setScanProgressText('Initializing on-device image preprocessing...');
 
       const { scanResult, updatedPages } = await LocalOcrEngine.scanPagesLocally(
@@ -379,6 +426,16 @@ export const MenuScannerView: React.FC = () => {
         existingProducts,
         update => setScanProgressText(update.message)
       );
+
+      if (!scanResult.products || scanResult.products.length === 0) {
+        setCurrentStep('capture');
+        showToast({
+          type: 'warning',
+          title: 'No products found',
+          message: scanResult.notes || 'Retake the photo straight-on with good light'
+        });
+        return;
+      }
 
       setPages(updatedPages);
       setExtractedCategories(scanResult.categories);

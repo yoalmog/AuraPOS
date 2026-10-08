@@ -353,13 +353,23 @@ class NativeBridge(
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("Accept", "application/json")
                 conn.setRequestProperty("X-Request-ID", requestId)
+                // Forward backend credentials supplied by the web layer (allowlisted headers only)
+                val authHeaders = parsed?.optJSONObject("authHeaders")
+                if (authHeaders != null) {
+                    for (name in listOf("Authorization", "X-Aura-Api-Key")) {
+                        val value = authHeaders.optString(name, "")
+                        if (value.isNotBlank()) conn.setRequestProperty(name, value)
+                    }
+                }
                 conn.instanceFollowRedirects = false // Do not silently follow redirects to authentication/cookie HTML gates
                 conn.doOutput = true
                 conn.connectTimeout = 30000
                 conn.readTimeout = 120000
 
+                // Never send credentials in the request body
+                val bodyJson = if (parsed != null) { parsed.remove("authHeaders"); parsed.toString() } else payloadJson
                 conn.outputStream.use { os ->
-                    os.write(payloadJson.toByteArray(Charsets.UTF_8))
+                    os.write(bodyJson.toByteArray(Charsets.UTF_8))
                     os.flush()
                 }
 

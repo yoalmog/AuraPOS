@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow cleartext raw socket and HTTP traffic for local LAN thermal printers on private subnets -->
-    <base-config cleartextTrafficPermitted="true">
+    <!--
+      Release: HTTPS only, system CAs only.
+      Note: raw TCP sockets to LAN thermal printers (port 9100) are NOT governed by this file,
+      so printing is unaffected. Debug builds override this (see src/debug/res/xml).
+    -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
 </network-security-config>

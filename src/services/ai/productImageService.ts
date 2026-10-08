@@ -6,6 +6,7 @@
  */
 
 import { ExtractedProduct, ProductAiImageVersion } from '../../types/menuScanner.ts';
+import { getApiAuthHeaders } from '../api/authHeaders.ts';
 import { ProductImageMetadata, ProductImageSource } from '../../types/pos.ts';
 import { ProductImagePromptBuilder } from './productImagePromptBuilder.ts';
 
@@ -56,7 +57,8 @@ export class ProductImageService {
       const response = await fetch('/api/products/generate-image', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...(await getApiAuthHeaders())
         },
         body: JSON.stringify({
           productName: product.name,

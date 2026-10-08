@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { getApiAuthHeaders } from '../../services/api/authHeaders.ts';
 import {
   Sparkles,
   Loader2,
@@ -75,7 +76,7 @@ export const BatchAiImageModal: React.FC<BatchAiImageModalProps> = ({
       try {
         const res = await fetch('/api/products/generate-image', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...(await getApiAuthHeaders()) },
           body: JSON.stringify({
             productName: prod.name,
             categoryName: prod.categoryName,

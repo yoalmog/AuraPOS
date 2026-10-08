@@ -367,10 +367,13 @@ class MainActivity : AppCompatActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
-            settings.allowFileAccess = true
-            settings.allowContentAccess = true
-            settings.allowFileAccessFromFileURLs = true
-            settings.allowUniversalAccessFromFileURLs = true
+            // App content is served over https://appassets.androidplatform.net via
+            // WebViewAssetLoader, so no file:// or cross-file access is needed.
+            // Leaving these on would let any loaded page read local files and reach the native bridge.
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.allowFileAccessFromFileURLs = false
+            settings.allowUniversalAccessFromFileURLs = false
             settings.mediaPlaybackRequiresUserGesture = false
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
@@ -427,6 +430,20 @@ class MainActivity : AppCompatActivity() {
             }
 
             webViewClient = object : WebViewClient() {
+                // The NativeBridge exposes printers/device control to JS, so the main frame must
+                // never navigate away from the app's own origin.
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): Boolean {
+                    val url = request.url
+                    val isAppOrigin = url.scheme == "https" && url.host == "appassets.androidplatform.net"
+                    if (!isAppOrigin) {
+                        android.util.Log.w("AuraPOS-Web", "Blocked navigation to untrusted URL: $url")
+                    }
+                    return !isAppOrigin
+                }
+
                 override fun shouldInterceptRequest(
                     view: WebView,
                     request: WebResourceRequest

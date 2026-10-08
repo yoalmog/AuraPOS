@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getApiAuthHeaders } from '../../services/api/authHeaders.ts';
 import {
   Sparkles,
   Loader2,
@@ -60,7 +61,7 @@ export const ProductAiImageStudio: React.FC<ProductAiImageStudioProps> = ({
 
       const response = await fetch('/api/products/generate-image', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await getApiAuthHeaders()) },
         body: JSON.stringify({
           productName: product.name,
           categoryName: product.categoryName,

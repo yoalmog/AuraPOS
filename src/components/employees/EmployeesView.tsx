@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { PinService } from '../../services/pinService.ts';
 import { usePOS } from '../../context/POSContext.tsx';
 import { Employee, EmployeeRole } from '../../types/pos.ts';
 import { StorageService } from '../../services/storageService.ts';
@@ -39,7 +40,7 @@ export const EmployeesView: React.FC = () => {
   const [formEmail, setFormEmail] = useState<string>('');
   const [formPhone, setFormPhone] = useState<string>('');
   const [formRole, setFormRole] = useState<EmployeeRole>('cashier');
-  const [formPin, setFormPin] = useState<string>('1234');
+  const [formPin, setFormPin] = useState<string>('');
   const [formActive, setFormActive] = useState<boolean>(true);
   const [formPermissions, setFormPermissions] = useState<string[]>(['pos', 'sales', 'customers']);
 
@@ -50,7 +51,7 @@ export const EmployeesView: React.FC = () => {
       setFormEmail('');
       setFormPhone('');
       setFormRole('cashier');
-      setFormPin(Math.floor(1000 + Math.random() * 9000).toString());
+      setFormPin(''); // owner chooses the PIN (field is masked, so a random one would be unknowable)
       setFormActive(true);
       setFormPermissions(['pos', 'sales', 'customers']);
       setIsModalOpen(true);
@@ -64,7 +65,7 @@ export const EmployeesView: React.FC = () => {
       setFormEmail(emp.email);
       setFormPhone(emp.phone);
       setFormRole(emp.role);
-      setFormPin(emp.pin);
+      setFormPin(''); // existing PIN is hashed; blank = keep current
       setFormActive(emp.active);
       setFormPermissions(emp.permissions);
       setIsModalOpen(true);
@@ -79,13 +80,15 @@ export const EmployeesView: React.FC = () => {
 
   const handleSaveEmployee = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName.trim() || !formPin.trim() || formPin.length !== 4) {
+    const pinProvided = formPin.trim() !== '';
+    if (!formName.trim() || (!editingEmp && !pinProvided) || (pinProvided && !PinService.isValidFormat(formPin.trim()))) {
       showToast({ type: 'warning', title: 'PIN must be exactly 4 digits' });
       return;
     }
 
-    requireOwnerAuth(() => {
+    requireOwnerAuth(async () => {
       const all = StorageService.getEmployees();
+      const newPinHash = pinProvided ? await PinService.hash(formPin.trim()) : null;
       const nowIso = new Date().toISOString();
 
       if (editingEmp) {
@@ -97,7 +100,7 @@ export const EmployeesView: React.FC = () => {
             email: formEmail.trim(),
             phone: formPhone.trim(),
             role: formRole,
-            pin: formPin.trim(),
+            pin: newPinHash ?? editingEmp.pin,
             active: formActive,
             permissions: formPermissions
           };
@@ -113,7 +116,7 @@ export const EmployeesView: React.FC = () => {
           email: formEmail.trim(),
           phone: formPhone.trim(),
           role: formRole,
-          pin: formPin.trim(),
+          pin: newPinHash as string,
           active: formActive,
           permissions: formPermissions,
           lastLogin: nowIso
@@ -193,7 +196,7 @@ export const EmployeesView: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-4 text-center">
                       <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200">
-                        {emp.pin}
+                        ••••
                       </span>
                     </td>
                     <td className="py-3.5 px-4">
@@ -276,14 +279,15 @@ export const EmployeesView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">4-Digit PIN *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">4-Digit PIN {editingEmp ? '' : '*'}</label>
                   <input
                     type="password"
                     maxLength={4}
-                    required
+                    inputMode="numeric"
+                    required={!editingEmp}
                     value={formPin}
-                    onChange={e => setFormPin(e.target.value)}
-                    placeholder="4 digits"
+                    onChange={e => setFormPin(e.target.value.replace(/\D/g, ''))}
+                    placeholder={editingEmp ? 'Blank = keep current' : '4 digits'}
                     className="w-full text-xs font-mono font-bold p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest"
                   />
                 </div>

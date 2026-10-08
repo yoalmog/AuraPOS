@@ -218,7 +218,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
         originalDataUrl: orientResult.originalDataUrl,
         correctedDataUrl: orientResult.correctedDataUrl,
         processedOcrDataUrl: orientResult.processedOcrDataUrl,
-        rotation: orientResult.detectedRotation,
+        rotation: 0, // correctedDataUrl already has any rotation baked in; this holds only manual user rotation
         autoRotationApplied: orientResult.detectedRotation,
         deskewAngle: orientResult.deskewAngle,
         activeDisplayTab: 'corrected',
@@ -387,7 +387,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                                 originalDataUrl: orient.originalDataUrl,
                                 correctedDataUrl: orient.correctedDataUrl,
                                 processedOcrDataUrl: orient.processedOcrDataUrl,
-                                rotation: orient.detectedRotation,
+                                rotation: 0, // correctedDataUrl already has any rotation baked in; this holds only manual user rotation
                                 autoRotationApplied: orient.detectedRotation,
                                 deskewAngle: orient.deskewAngle,
                                 activeDisplayTab: 'corrected',

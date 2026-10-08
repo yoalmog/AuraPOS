@@ -18,10 +18,14 @@ export const PinLockScreen: React.FC = () => {
 
       if (nextPin.length === 4) {
         // Auto-check on 4 digits
-        setTimeout(() => {
-          const success = unlockWithPin(nextPin);
-          if (!success) {
-            setErrorMsg('Invalid PIN code. Please try again.');
+        setTimeout(async () => {
+          const result = await unlockWithPin(nextPin, selectedEmp?.id);
+          if (!result.ok) {
+            setErrorMsg(
+              result.lockedForMs
+                ? `Too many attempts. Try again in ${Math.ceil(result.lockedForMs / 1000)}s.`
+                : 'Invalid PIN code. Please try again.'
+            );
             setPin('');
           }
         }, 150);

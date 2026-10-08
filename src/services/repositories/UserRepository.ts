@@ -23,7 +23,7 @@ export class UserRepository {
             email: '',
             phone: u.phone || '',
             role: 'cashier',
-            pin: '1234', // In production, checked via hashed verification
+            pin: '', // No local PIN: remote profiles must set one before PIN sign-in works
             active: u.is_active,
             permissions: ['pos', 'sales']
           }));

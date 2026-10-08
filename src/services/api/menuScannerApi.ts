@@ -1,4 +1,5 @@
 import { ScannedMenuPage } from '../../types/menuScanner.ts';
+import { getApiAuthHeaders } from './authHeaders.ts';
 import { optimizeImageForOCR, validateMenuPageImage } from '../../utils/imageOptimizer.ts';
 import { NativeBridgeService } from '../native/NativeBridgeService.ts';
 import { StorageService } from '../storageService.ts';
@@ -272,7 +273,7 @@ export class MenuScannerApi {
       }
 
       try {
-        const opt = await optimizeImageForOCR(page.dataUrl, page.rotation || 0, 1500, 0.82);
+        const opt = await optimizeImageForOCR(page.dataUrl, page.rotation || 0, 2200, 0.88);
         optimizedPages.push({
           dataUrl: opt.dataUrl,
           mimeType: 'image/jpeg',
@@ -321,7 +322,7 @@ export class MenuScannerApi {
       window.AndroidPOSNative?.analyzeMenu
     ) {
       try {
-        const nativeRes = await NativeBridgeService.menuScanner.analyzeMenuViaNative(payloadJson);
+        const nativeRes = await NativeBridgeService.menuScanner.analyzeMenuViaNative(JSON.stringify({ ...payload, authHeaders: await getApiAuthHeaders() }));
         if (nativeRes && nativeRes.success && nativeRes.data) {
           onProgress?.('Processing results...');
           return nativeRes as AnalyzeMenuResponse;
@@ -364,7 +365,8 @@ export class MenuScannerApi {
           headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json',
-            'X-Request-ID': requestId
+            'X-Request-ID': requestId,
+            ...(await getApiAuthHeaders())
           },
           body: payloadJson,
           signal: controller.signal

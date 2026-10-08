@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { PinService } from '../services/pinService.ts';
 import {
   AccessibilitySettings,
   CartItem,
@@ -61,6 +62,12 @@ export interface ToastMessage {
   duration?: number;
 }
 
+export interface PinAttemptResult {
+  ok: boolean;
+  /** Set when the PIN pad is temporarily locked after repeated failures */
+  lockedForMs?: number;
+}
+
 interface POSContextType {
   // Navigation
   activeRoute: AppRoute;
@@ -98,14 +105,14 @@ interface POSContextType {
   switchEmployee: (employeeId: string) => void;
   isPinLocked: boolean;
   setIsPinLocked: (locked: boolean) => void;
-  unlockWithPin: (pin: string) => boolean;
+  unlockWithPin: (pin: string, employeeId?: string) => Promise<PinAttemptResult>;
   isOwner: boolean;
   ownerEmployee: Employee | undefined;
   requireOwnerAuth: (callback: () => void, actionTitle?: string) => void;
   isOwnerAuthModalOpen: boolean;
   ownerAuthTitle: string;
   closeOwnerAuthModal: () => void;
-  submitOwnerPin: (pin: string) => boolean;
+  submitOwnerPin: (pin: string) => Promise<PinAttemptResult>;
 
   // Data
   settings: StoreSettings;
@@ -546,9 +553,17 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOwnerAuthTitle('');
   }, []);
 
-  const submitOwnerPin = useCallback((pin: string): boolean => {
-    const matchedOwner = employees.find(e => e.role === 'owner' && e.pin === pin && e.active);
+  const submitOwnerPin = useCallback(async (pin: string): Promise<PinAttemptResult> => {
+    const scope = 'owner';
+    const remaining = PinService.getLockRemainingMs(scope);
+    if (remaining > 0) return { ok: false, lockedForMs: remaining };
+
+    let matchedOwner: Employee | undefined;
+    for (const e of employees.filter(e => e.role === 'owner' && e.active)) {
+      if (await PinService.verify(pin, e.pin)) { matchedOwner = e; break; }
+    }
     if (matchedOwner) {
+      PinService.recordSuccess(scope);
       // Switch active user to owner or execute authorized action
       switchEmployee(matchedOwner.id);
       setIsOwnerAuthModalOpen(false);
@@ -557,21 +572,50 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         pendingOwnerAction();
         setPendingOwnerAction(null);
       }
-      return true;
+      return { ok: true };
     }
-    return false;
+    return { ok: false, lockedForMs: PinService.recordFailure(scope) || undefined };
   }, [employees, switchEmployee, pendingOwnerAction, showToast]);
 
-  const unlockWithPin = useCallback((pin: string): boolean => {
-    const matched = employees.find(e => e.pin === pin && e.active);
+  const unlockWithPin = useCallback(async (pin: string, employeeId?: string): Promise<PinAttemptResult> => {
+    const scope = `unlock:${employeeId || 'any'}`;
+    const remaining = PinService.getLockRemainingMs(scope);
+    if (remaining > 0) return { ok: false, lockedForMs: remaining };
+
+    let matched: Employee | undefined;
+    for (const e of employees.filter(e => e.active && (!employeeId || e.id === employeeId))) {
+      if (await PinService.verify(pin, e.pin)) { matched = e; break; }
+    }
     if (matched) {
+      PinService.recordSuccess(scope);
       switchEmployee(matched.id);
       setIsPinLocked(false);
       showToast({ type: 'success', title: `Welcome back, ${matched.name}` });
-      return true;
+      return { ok: true };
     }
-    return false;
+    return { ok: false, lockedForMs: PinService.recordFailure(scope) || undefined };
   }, [employees, switchEmployee, showToast]);
+
+  // One-time migration: hash any legacy plaintext PINs found in storage
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const all = StorageService.getEmployees();
+      if (all.every(e => PinService.isHashed(e.pin))) return;
+      try {
+        const migrated = await Promise.all(
+          all.map(async e => (PinService.isHashed(e.pin) ? e : { ...e, pin: await PinService.hash(e.pin) }))
+        );
+        if (cancelled) return;
+        StorageService.saveEmployees(migrated);
+        setEmployees(migrated);
+        setCurrentEmployeeState(StorageService.getCurrentEmployee());
+      } catch (err) {
+        console.warn('[PIN] Migration to hashed PINs failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Cart operations
   const addToCart = useCallback((product: Product, variant?: ProductVariant, quantity = 1, notes?: string) => {

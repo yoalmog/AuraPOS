@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import { timingSafeEqual } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,20 +14,119 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware for parsing large JSON payloads (up to 50mb for menu OCR)
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Behind Cloud Run / a reverse proxy, trust one hop so req.ip is the real client
+app.set('trust proxy', 1);
 
-// CORS headers
+const isProduction = process.env.NODE_ENV === 'production';
+
+// ---------------------------------------------------------------------------
+// CORS: explicit allowlist (no wildcard). Same-origin requests need no CORS.
+// Extra origins via ALLOWED_ORIGINS="https://pos.example.com,https://other.com"
+// ---------------------------------------------------------------------------
+const ALLOWED_ORIGINS = new Set<string>([
+  'https://appassets.androidplatform.net', // Android WebView asset origin
+  ...(process.env.APP_URL ? [process.env.APP_URL.replace(/\/$/, '')] : []),
+  ...(process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim().replace(/\/$/, '')).filter(Boolean),
+  ...(isProduction ? [] : ['http://localhost:3000', 'http://localhost:5173'])
+]);
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Request-ID');
+  const origin = req.headers.origin;
+  res.header('Vary', 'Origin');
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Aura-Api-Key, X-Request-ID');
+  }
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
+    return res.sendStatus(origin && ALLOWED_ORIGINS.has(origin) ? 204 : 403);
   }
   next();
 });
+
+// ---------------------------------------------------------------------------
+// Authentication for paid AI endpoints.
+// Accepts EITHER:
+//   1. A valid Supabase access token (Authorization: Bearer <jwt>), verified
+//      against SUPABASE_URL / SUPABASE_ANON_KEY (falls back to VITE_* names), OR
+//   2. A shared key (X-Aura-Api-Key) matching AURA_API_KEY.
+// In production the server fails closed if neither is configured.
+// ---------------------------------------------------------------------------
+const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+const AURA_API_KEY = process.env.AURA_API_KEY || '';
+const tokenCache = new Map<string, number>(); // token -> expiry ms
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
+async function isValidSupabaseToken(token: string): Promise<boolean> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
+  const cached = tokenCache.get(token);
+  if (cached && cached > Date.now()) return true;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY }
+    });
+    if (r.ok) {
+      if (tokenCache.size > 500) tokenCache.clear();
+      tokenCache.set(token, Date.now() + 60_000);
+      return true;
+    }
+  } catch (e: any) {
+    console.warn('Supabase token verification failed:', e?.message);
+  }
+  return false;
+}
+
+async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authConfigured = Boolean(AURA_API_KEY) || Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+  if (!authConfigured) {
+    if (isProduction) {
+      return res.status(503).json({ success: false, error: 'Server authentication is not configured (set AURA_API_KEY or Supabase credentials).' });
+    }
+    return next(); // local development only
+  }
+
+  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (bearer && await isValidSupabaseToken(bearer)) return next();
+
+  const key = req.headers['x-aura-api-key'];
+  if (AURA_API_KEY && typeof key === 'string' && safeEqual(key, AURA_API_KEY)) return next();
+
+  return res.status(401).json({ success: false, error: 'Unauthorized' });
+}
+
+// ---------------------------------------------------------------------------
+// Simple in-memory fixed-window rate limiter (per client IP).
+// ---------------------------------------------------------------------------
+function rateLimit(maxPerMinute: number) {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const now = Date.now();
+    const ip = req.ip || 'unknown';
+    const entry = hits.get(ip);
+    if (!entry || entry.resetAt < now) {
+      if (hits.size > 5000) hits.clear();
+      hits.set(ip, { count: 1, resetAt: now + 60_000 });
+      return next();
+    }
+    entry.count += 1;
+    if (entry.count > maxPerMinute) {
+      res.header('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)));
+      return res.status(429).json({ success: false, error: 'Too many requests. Please slow down.' });
+    }
+    next();
+  };
+}
+
+// Auth + rate limit run BEFORE body parsing so unauthenticated callers can't
+// make the server buffer large payloads. Large limit only for menu OCR scans.
+app.use('/api/menu', rateLimit(20), requireAuth, express.json({ limit: '50mb' }));
+app.use('/api/products', rateLimit(30), requireAuth, express.json({ limit: '2mb' }));
 
 // Diagnostic health check endpoints for Android reachability testing (Requirement 3)
 app.get(['/health', '/api/health'], (_req, res) => {
@@ -366,25 +466,10 @@ You are an expert Restaurant & Café Menu OCR Specialist and POS Catalog Enginee
 Analyze the provided restaurant/cafe menu page image(s) thoroughly (supports English, Spanish, Italian, and all languages).
 
 CRITICAL EXTRACTION INSTRUCTIONS:
-1. Extract ALL categories/sections, products, and prices from the menu pages.
-   - For example: "PIZZAS ARDIENTES", "PIZZAS COQUETAS", "PIZZAS ECOLÓGICAS", "PIZZAS DE LA CASA", "BEBIDAS", "CHICHA MORADA", "GASEOSAS", "COCTELES", "POSTRES", "ENTRADAS", "VODKA", "CERVEZA", "SANGRIA", "VINO CALIENTE", "BEBIDAS ESPIRITUOSAS DE LA BARRA", "PISCO", "RON", etc.
-2. For each category:
-   - Identify the clear Category Name.
-   - Assign an appropriate Lucide icon name (e.g. Pizza, Coffee, Utensils, Flame, Wine, Beer, Cake, Salad, Sandwich, Sparkles, CupSoda, GlassWater).
-   - Assign a clean modern hex color.
-3. For each product/dish/drink:
-   - Extract the exact Item Name (e.g. "LUNA ROJA", "LA DIABÓLICA", "LA SALVAJE", "LUNA DE MIEL", "LUNA NUEVA", "LA HUEVONA", "LA SALAMERA", "LA HAWAIANA", "LA GRINGA", "Chicha Morada 1/2 Litro", "Chicha Morada 1 Litro", "SCREWDRIVER", "MULA RUSA", "OJOS VERDES", "PISCO SOUR", "CUBA LIBRE", "PIÑA COLADA", "MOJITO", "DAIQUIRI", "CHILCANO DE PISCO", "SOL Y SOMBRA", "MACHUPICCHU").
-   - Extract the description/ingredients (e.g. "salsa de tomate picante, mozzarella, rocoto, aceituna y oregano", "hielo, vodka y jugo de naranja", "hielo, vodka, limon y ginger ale", "hielo, pisco, ginger ale y limon", "hielo, ron, coca cola y limon", "pisco, crema de guinda, ginger ale y limon", "azúcar, hierba buena, ron, limon y cola blanca").
-   - Multi-size columns handling: If prices are in columns like "Personal / Mediana / Familiar" (e.g. 17.00, 30.00, 48.00) or "Personal / No Tan Personal / De Litro" (e.g. 9.00, 12.00, 15.00), populate the 'variants' array:
-     [
-       { "name": "Personal", "price": 9.00 },
-       { "name": "No Tan Personal", "price": 12.00 },
-       { "name": "De Litro", "price": 15.00 }
-     ]
-     and set 'price' to the base/lowest price (e.g. 9.00).
-   - If single price, set 'price' to that number.
-   - Extract modifiers/extras if mentioned (e.g. "Pan al Ajo", "Extra queso", "Adicional").
-   - Detect dietary tags: isSpicy (picante/spicy/chili), isVegetarian (vegetariana/ecológica), isGlutenFree, isAlcoholic (cerveza, coctel, pisco, vino, mojito, piña colada, vodka, ron).
+0. Read ONLY what is actually printed on the image(s). NEVER invent, guess or complete items, names or prices. If a page is blurry, rotated or unreadable, extract only what you can truly read. If nothing is readable, return empty "categories" and "products" arrays and explain why in "notes". Pages may be slightly tilted or rotated: read the text in whatever orientation it appears.
+1. Extract ALL categories/sections, products, and prices. Section headings (e.g. "Starters", "Pizzas", "Drinks", "Desserts", "Cocktails") become categories. Keep the menu's own language and spelling.
+2. For each category: identify the clear Category Name; assign an appropriate Lucide icon name (e.g. Pizza, Coffee, Utensils, Flame, Wine, Beer, Cake, Salad, Sandwich, Sparkles, CupSoda, GlassWater); assign a clean modern hex color.
+3. For each product: extract the exact Item Name as printed; the description/ingredients only if printed under the item. If prices are in size columns (e.g. Small / Medium / Large), fill the 'variants' array with one entry per size and its price, and set 'price' to the lowest. If there is one price, set 'price' to it. Extract modifiers/extras only if printed on the menu. Detect dietary tags: isSpicy, isVegetarian, isGlutenFree, isAlcoholic.
 4. Deduplicate products if the same item appears across multiple scanned pages.
 5. Return ONLY pure valid JSON in the following exact format:
 {
@@ -434,18 +519,17 @@ CRITICAL EXTRACTION INSTRUCTIONS:
     let lastError: any = null;
     let successfulModel = '';
 
-    // Models supported by @google/genai SDK in priority order
+    // Models supported by @google/genai SDK in priority order (accuracy first, light model as fallback)
     const modelsToTry = [
-      'gemini-3.1-flash-lite',
-      'gemini-flash-lite-latest',
-      'gemini-3.8-flash'
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite'
     ];
 
     for (const modelName of modelsToTry) {
       try {
         console.log(`[AI_MENU_SCAN] Attempting OCR with model: ${modelName}`);
 
-        // Set a 25s timeout per attempt so unresponsive models fail-fast to the next candidate
+        // Set a 50s timeout per attempt so unresponsive models fail-fast to the next candidate
         const callPromise = ai.models.generateContent({
           model: modelName,
           contents: {
@@ -459,7 +543,7 @@ CRITICAL EXTRACTION INSTRUCTIONS:
         });
 
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout after 25s waiting for model ${modelName}`)), 25000)
+          setTimeout(() => reject(new Error(`Timeout after 50s waiting for model ${modelName}`)), 50000)
         );
 
         response = await Promise.race([callPromise, timeoutPromise]);
@@ -541,9 +625,7 @@ CRITICAL EXTRACTION INSTRUCTIONS:
 
 // Mount Vite middleware in development or serve dist in production
 async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
-
-  if (!isProd) {
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'

@@ -21,6 +21,10 @@ export interface OrientationAnalysisResult {
   height: number;
 }
 
+// Content-based orientation guessing misfired on various menu layouts and is disabled.
+// Browsers and Android WebView already apply EXIF orientation on image decoding.
+const AUTO_ROTATE_BY_CONTENT = false;
+
 export class ImageOrientationService {
   /**
    * Main entry point: Analyzes and corrects orientation and tilt of an image.
@@ -40,23 +44,14 @@ export class ImageOrientationService {
           const origW = img.naturalWidth || img.width;
           const origH = img.naturalHeight || img.height;
 
-          // 1. Check EXIF orientation
-          const exifRotation = this.getExifOrientation(dataUrl);
-
-          // 2. Physical content orientation detection (if not explicitly forced)
+          // Do NOT rotate by EXIF: browsers and Android WebView already apply EXIF
+          // orientation when decoding images, so naturalWidth/naturalHeight and drawImage are already upright.
           let detectedRotation = forcedRotation;
           let confidence = 0.9;
-
-          if (forcedRotation === 0) {
-            if (exifRotation !== 0) {
-              detectedRotation = exifRotation;
-              confidence = 0.95;
-            } else {
-              // Analyze physical visual content across 4 orientations: 0°, 90°, 180°, 270°
-              const contentResult = this.detectContentOrientation(img, origW, origH);
-              detectedRotation = contentResult.bestAngle;
-              confidence = contentResult.confidence;
-            }
+          if (forcedRotation === 0 && AUTO_ROTATE_BY_CONTENT) {
+            const contentResult = this.detectContentOrientation(img, origW, origH);
+            detectedRotation = contentResult.bestAngle;
+            confidence = contentResult.confidence;
           }
 
           // 3. Deskew calculation (small tilt correction +/- 15°)

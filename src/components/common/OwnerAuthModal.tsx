@@ -32,10 +32,14 @@ export const OwnerAuthModal: React.FC = () => {
       setError('');
       if (nextPin.length === 4) {
         // Auto-validate on 4 digits
-        setTimeout(() => {
-          const success = submitOwnerPin(nextPin);
-          if (!success) {
-            setError(t('auth.invalidOwnerPin', 'Incorrect Owner PIN. Please try again.'));
+        setTimeout(async () => {
+          const result = await submitOwnerPin(nextPin);
+          if (!result.ok) {
+            setError(
+              result.lockedForMs
+                ? `Too many attempts. Try again in ${Math.ceil(result.lockedForMs / 1000)}s.`
+                : t('auth.invalidOwnerPin', 'Incorrect Owner PIN. Please try again.')
+            );
             setPin('');
           }
         }, 100);
