@@ -148,7 +148,8 @@ export function runSecurityTests() {
 
   const workflowVerifiesRemoteLedger =
     workflowContent.includes("Verify Earliest Remote Pending Migration") &&
-    workflowContent.includes("Earlier migration '$fname' ($ts) is pending or unconfirmed on remote!");
+    workflowContent.includes("find-earliest-pending") &&
+    workflowContent.includes("SAFETY VIOLATION: Target migration '$TARGET_FILE' does not match earliest pending migration");
 
   assertTest(
     workflowBlocksNonEarliest && workflowVerifiesRemoteLedger,

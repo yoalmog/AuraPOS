@@ -1044,17 +1044,23 @@ BEGIN
     END IF;
 
     -- Security Authorization Check:
-    -- Fail-closed: Anonymous callers cannot create sales; authenticated callers must possess a valid store membership and belong to the target store.
+    -- Fail-closed: Anonymous callers cannot create sales; authenticated callers must have verified identity, assigned store membership, and match target store.
+    -- Privileged service_role callers (auth.role() = 'service_role') bypass membership checks.
     IF auth.role() = 'anon' THEN
         RAISE EXCEPTION 'Access denied: anonymous callers cannot process sales';
-    END IF;
-    IF auth.uid() IS NOT NULL THEN
+    ELSIF auth.role() = 'service_role' THEN
+        -- Intentional privileged backend synchronization path
+        NULL;
+    ELSIF auth.uid() IS NOT NULL THEN
         IF auth_user_store_id() IS NULL THEN
             RAISE EXCEPTION 'Access denied: authenticated caller has no assigned store membership';
         END IF;
         IF auth_user_store_id() <> v_store_id THEN
             RAISE EXCEPTION 'Cross-store access denied: caller does not belong to store %', v_store_id;
         END IF;
+    ELSE
+        -- No authenticated identity and not service_role: fail closed
+        RAISE EXCEPTION 'Access denied: missing authenticated identity';
     END IF;
 
     -- Check if sale already exists by primary key UUID
@@ -1298,17 +1304,23 @@ BEGIN
     END IF;
 
     -- Security Authorization Check:
-    -- Fail-closed: Anonymous callers cannot alter inventory; authenticated callers must possess a valid store membership and belong to the target store.
+    -- Fail-closed: Anonymous callers cannot alter inventory; authenticated callers must have verified identity, assigned store membership, and match target store.
+    -- Privileged service_role callers (auth.role() = 'service_role') bypass membership checks.
     IF auth.role() = 'anon' THEN
         RAISE EXCEPTION 'Access denied: anonymous callers cannot record inventory movements';
-    END IF;
-    IF auth.uid() IS NOT NULL THEN
+    ELSIF auth.role() = 'service_role' THEN
+        -- Intentional privileged backend synchronization path
+        NULL;
+    ELSIF auth.uid() IS NOT NULL THEN
         IF auth_user_store_id() IS NULL THEN
             RAISE EXCEPTION 'Access denied: authenticated caller has no assigned store membership';
         END IF;
         IF auth_user_store_id() <> v_store_id THEN
             RAISE EXCEPTION 'Cross-store access denied: caller does not belong to store %', v_store_id;
         END IF;
+    ELSE
+        -- No authenticated identity and not service_role: fail closed
+        RAISE EXCEPTION 'Access denied: missing authenticated identity';
     END IF;
 
     INSERT INTO public.inventory_movements (
@@ -1362,17 +1374,23 @@ BEGIN
     END IF;
 
     -- Security Authorization Check:
-    -- Fail-closed: Anonymous callers cannot manage cash shifts; authenticated callers must possess a valid store membership and belong to the target store.
+    -- Fail-closed: Anonymous callers cannot manage cash shifts; authenticated callers must have verified identity, assigned store membership, and match target store.
+    -- Privileged service_role callers (auth.role() = 'service_role') bypass membership checks.
     IF auth.role() = 'anon' THEN
         RAISE EXCEPTION 'Access denied: anonymous callers cannot process cash shifts';
-    END IF;
-    IF auth.uid() IS NOT NULL THEN
+    ELSIF auth.role() = 'service_role' THEN
+        -- Intentional privileged backend synchronization path
+        NULL;
+    ELSIF auth.uid() IS NOT NULL THEN
         IF auth_user_store_id() IS NULL THEN
             RAISE EXCEPTION 'Access denied: authenticated caller has no assigned store membership';
         END IF;
         IF auth_user_store_id() <> v_store_id THEN
             RAISE EXCEPTION 'Cross-store access denied: caller does not belong to store %', v_store_id;
         END IF;
+    ELSE
+        -- No authenticated identity and not service_role: fail closed
+        RAISE EXCEPTION 'Access denied: missing authenticated identity';
     END IF;
 
     INSERT INTO public.cash_shifts (
@@ -1506,17 +1524,23 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
     -- Security Authorization Check:
-    -- Fail-closed: Anonymous callers cannot pull store data; authenticated callers must possess a valid store membership and belong to the target store.
+    -- Fail-closed: Anonymous callers cannot pull store data; authenticated callers must have verified identity, assigned store membership, and match target store.
+    -- Privileged service_role callers (auth.role() = 'service_role') bypass membership checks.
     IF auth.role() = 'anon' THEN
         RAISE EXCEPTION 'Access denied: anonymous callers cannot pull store changes';
-    END IF;
-    IF auth.uid() IS NOT NULL THEN
+    ELSIF auth.role() = 'service_role' THEN
+        -- Intentional privileged backend synchronization path
+        NULL;
+    ELSIF auth.uid() IS NOT NULL THEN
         IF auth_user_store_id() IS NULL THEN
             RAISE EXCEPTION 'Access denied: authenticated caller has no assigned store membership';
         END IF;
         IF auth_user_store_id() <> p_store_id THEN
             RAISE EXCEPTION 'Cross-store access denied: caller does not belong to store %', p_store_id;
         END IF;
+    ELSE
+        -- No authenticated identity and not service_role: fail closed
+        RAISE EXCEPTION 'Access denied: missing authenticated identity';
     END IF;
 
     IF p_entity_type = 'categories' THEN

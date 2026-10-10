@@ -200,55 +200,22 @@ jobs:
             echo "  - $(basename "$f")"
           done
 
-          # If remote migration list is available, parse applied migrations
-          APPLIED_MIGRATIONS=""
+          # Use TypeScript guard service CLI for exact column parsing
+          LEDGER_ARG=""
           if [ -f /tmp/migration_list.txt ]; then
-            # Parse timestamps that have a non-empty remote column
-            # In supabase migration list table: | Local | Remote | Time |
-            # A migration is applied remotely if its timestamp appears with remote status
-            APPLIED_MIGRATIONS=$(grep -E '^[| ]*[0-9]{14}' /tmp/migration_list.txt | awk '{print $1, $2, $3}' || true)
-            echo "Remote ledger entries detected."
+            LEDGER_ARG="/tmp/migration_list.txt"
           fi
 
-          # Find earliest pending migration
-          EARLIEST_PENDING=""
-          PENDING_COUNT=0
-          for f in "${LOCAL_FILES[@]}"; do
-            fname=$(basename "$f")
-            ts=$(echo "$fname" | cut -d'_' -f1)
-            # Check if applied remotely
-            IS_APPLIED=false
-            if [ -n "$APPLIED_MIGRATIONS" ]; then
-              if echo "$APPLIED_MIGRATIONS" | grep -q "$ts"; then
-                # Check if the line confirms applied on remote
-                if grep -E "^[| ]*$ts" /tmp/migration_list.txt | grep -qiE "applied|yes|[0-9]{4}-[0-9]{2}-[0-9]{2}"; then
-                  IS_APPLIED=true
-                fi
-              fi
-            fi
+          ANALYSIS_JSON=$(npx tsx src/services/migration/migrationGuardCli.ts find-earliest-pending "$LEDGER_ARG" "supabase/migrations")
+          echo "Ledger Analysis Output: $ANALYSIS_JSON"
 
-            if [ "$IS_APPLIED" = false ]; then
-              PENDING_COUNT=$((PENDING_COUNT + 1))
-              if [ -z "$EARLIEST_PENDING" ]; then
-                EARLIEST_PENDING="$fname"
-              fi
-            fi
-          done
+          HAS_PENDING=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.hasPending);" "$ANALYSIS_JSON")
+          EARLIEST_FILE=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.earliest || '');" "$ANALYSIS_JSON")
+          EARLIEST_TS=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.earliestTs || '');" "$ANALYSIS_JSON")
+          PENDING_COUNT=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.pendingCount || 0);" "$ANALYSIS_JSON")
 
-          # Fallback if no remote ledger (local evaluation mode): first local file is earliest
-          if [ -z "$EARLIEST_PENDING" ] && [ ${#LOCAL_FILES[@]} -gt 0 ]; then
-            EARLIEST_PENDING=$(basename "${LOCAL_FILES[0]}")
-            PENDING_COUNT=${#LOCAL_FILES[@]}
-          fi
-
-          HAS_PENDING="false"
-          NEXT_MIGRATION_FILE=""
-          NEXT_MIGRATION_TS=""
-          if [ -n "$EARLIEST_PENDING" ]; then
-            HAS_PENDING="true"
-            NEXT_MIGRATION_FILE="$EARLIEST_PENDING"
-            NEXT_MIGRATION_TS=$(echo "$EARLIEST_PENDING" | cut -d'_' -f1)
-          fi
+          NEXT_MIGRATION_FILE="$EARLIEST_FILE"
+          NEXT_MIGRATION_TS="$EARLIEST_TS"
 
           # Validate requested target if provided
           REQ_TARGET="${{ inputs.target_migration }}"
@@ -357,24 +324,33 @@ jobs:
 
           TARGET_FILE="${{ inputs.target_migration || needs.preflight-audit.outputs.next_migration_file }}"
           if [ -z "$TARGET_FILE" ] || [ ! -f "supabase/migrations/$TARGET_FILE" ]; then
-            echo "::error::Target migration '$TARGET_FILE' does not exist!"
+            echo "::error::Target migration '$TARGET_FILE' does not exist in repository!"
             exit 1
           fi
 
           TARGET_TS=$(echo "$TARGET_FILE" | cut -d'_' -f1)
+          if ! [[ "$TARGET_TS" =~ ^[0-9]{14}$ ]]; then
+            echo "::error::Target migration timestamp '$TARGET_TS' is not a valid 14-digit format!"
+            exit 1
+          fi
 
-          # Verify no earlier migration is pending on remote
-          for f in supabase/migrations/*.sql; do
-            fname=$(basename "$f")
-            ts=$(echo "$fname" | cut -d'_' -f1)
-            if [ "$ts" \< "$TARGET_TS" ]; then
-              # If earlier migration exists, verify it is recorded as applied on remote
-              if ! grep -E "^[| ]*$ts" /tmp/deploy_migration_list.txt | grep -qiE "applied|yes|[0-9]{4}-[0-9]{2}-[0-9]{2}"; then
-                echo "::error::ABORT: Earlier migration '$fname' ($ts) is pending or unconfirmed on remote! Target migration '$TARGET_FILE' ($TARGET_TS) cannot be applied out of order."
-                exit 1
-              fi
-            fi
-          done
+          # Use TypeScript guard service CLI to strictly determine earliest pending migration
+          ANALYSIS_JSON=$(npx tsx src/services/migration/migrationGuardCli.ts find-earliest-pending "/tmp/deploy_migration_list.txt" "supabase/migrations")
+          echo "Deploy Ledger Analysis: $ANALYSIS_JSON"
+
+          HAS_PENDING=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.hasPending);" "$ANALYSIS_JSON")
+          EARLIEST_FILE=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.earliest || '');" "$ANALYSIS_JSON")
+
+          if [ "$HAS_PENDING" != "true" ]; then
+            echo "::error::SAFETY VIOLATION: Remote ledger indicates zero pending migrations! Deployment aborted."
+            exit 1
+          fi
+
+          if [ "$TARGET_FILE" != "$EARLIEST_FILE" ]; then
+            echo "::error::SAFETY VIOLATION: Target migration '$TARGET_FILE' does not match earliest pending migration '$EARLIEST_FILE'!"
+            exit 1
+          fi
+
           echo "Confirmed: '$TARGET_FILE' is strictly the earliest pending migration."
 
       - name: Stage Isolated Single Migration (Zero Mod to Original Directory)
@@ -383,6 +359,11 @@ jobs:
           echo "=== Staging Isolated Single Migration Environment ==="
           TARGET_FILE="${{ inputs.target_migration || needs.preflight-audit.outputs.next_migration_file }}"
           TARGET_TS=$(echo "$TARGET_FILE" | cut -d'_' -f1)
+
+          if ! [[ "$TARGET_TS" =~ ^[0-9]{14}$ ]]; then
+            echo "::error::Invalid target timestamp: '$TARGET_TS' (must be 14 digits)"
+            exit 1
+          fi
 
           # Create an isolated staging workspace copy
           STAGING_DIR="/tmp/supabase_single_migration_staging"
@@ -397,7 +378,8 @@ jobs:
           for file in supabase/migrations/*.sql; do
             fname=$(basename "$file")
             ts=$(echo "$fname" | cut -d'_' -f1)
-            if [ "$ts" \<= "$TARGET_TS" ]; then
+            # Safe POSIX string comparison: copy file if ts < TARGET_TS or ts == TARGET_TS
+            if [ "$ts" \< "$TARGET_TS" ] || [ "$ts" = "$TARGET_TS" ]; then
               cp "$file" "$STAGING_DIR/supabase/migrations/"
               INCLUDED_COUNT=$((INCLUDED_COUNT + 1))
             fi
@@ -407,13 +389,9 @@ jobs:
           echo "Included $INCLUDED_COUNT migration(s) (up to $TARGET_TS):"
           ls -la "$STAGING_DIR/supabase/migrations/"
 
-          # Verify exact target is present
-          if [ ! -f "$STAGING_DIR/supabase/migrations/$TARGET_FILE" ]; then
-            echo "::error::Target file $TARGET_FILE missing in staging environment!"
-            exit 1
-          fi
+          # Run automated staging validator to PROVE exactly one unapplied migration is visible
+          npx tsx src/services/migration/migrationGuardCli.ts validate-staging "$STAGING_DIR" "$TARGET_FILE" "/tmp/deploy_migration_list.txt"
 
-          # Prove that exactly one unapplied migration is visible to CLI
           echo "staging_dir=$STAGING_DIR" >> $GITHUB_OUTPUT
           echo "target_file=$TARGET_FILE" >> $GITHUB_OUTPUT
           echo "target_ts=$TARGET_TS" >> $GITHUB_OUTPUT

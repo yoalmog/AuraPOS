@@ -13,8 +13,9 @@
     "db:lint": "supabase db lint",
     "db:list": "supabase migration list",
     "db:push": "supabase db push",
-    "test": "tsx src/tests/phase4aCloudFoundation.test.ts && tsx src/tests/securityAndMigrationGuards.test.ts",
+    "test": "tsx src/tests/phase4aCloudFoundation.test.ts && tsx src/tests/securityAndMigrationGuards.test.ts && tsx src/tests/comprehensiveGuardFixtures.test.ts",
     "test:security": "tsx src/tests/securityAndMigrationGuards.test.ts",
+    "test:fixtures": "tsx src/tests/comprehensiveGuardFixtures.test.ts",
     "test:real-supabase": "tsx src/tests/realSupabaseIntegration.test.ts"
   },
   "dependencies": {
