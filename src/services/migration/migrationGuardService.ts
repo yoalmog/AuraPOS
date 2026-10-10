@@ -2,9 +2,10 @@ import fs from 'fs';
 import path from 'path';
 
 export interface MigrationStatus {
-  local: string;
+  local: string | null;
   remote: string | null;
   isApplied: boolean;
+  isMismatched?: boolean;
 }
 
 /**
@@ -13,6 +14,11 @@ export interface MigrationStatus {
  * - Must locate header row with LOCAL and REMOTE columns
  * - Row MUST have a valid 14-digit timestamp in the REMOTE column to count as applied.
  * - Dates in TIME (UTC) or elsewhere must NEVER count as remote application proof.
+ * - Supports:
+ *   - Normal applied rows: LOCAL == REMOTE (14-digit)
+ *   - Local-only unapplied rows: LOCAL has 14-digit, REMOTE is empty
+ *   - Remote-only rows: LOCAL is empty, REMOTE has 14-digit
+ *   - Mismatched rows: LOCAL != REMOTE (both have 14 digits but different values)
  * - Unknown, malformed, or missing output throws an error (fail closed).
  */
 export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
@@ -38,18 +44,49 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
     const localCol = parts[1];
     const remoteCol = parts[2];
 
+    const isLocalTs = /^\d{14}$/.test(localCol);
+    const isRemoteTs = /^\d{14}$/.test(remoteCol);
+
     // Ignore horizontal separator rows like |-------|--------|
-    if (!/^\d{14}$/.test(localCol)) {
+    if (!isLocalTs && !isRemoteTs) {
       continue;
     }
 
-    // Strict check: REMOTE column MUST be exactly the 14-digit timestamp
-    const isApplied = /^\d{14}$/.test(remoteCol) && remoteCol === localCol;
-    results.push({
-      local: localCol,
-      remote: isApplied ? remoteCol : null,
-      isApplied
-    });
+    if (isLocalTs && isRemoteTs) {
+      if (localCol === remoteCol) {
+        // Normal applied migration
+        results.push({
+          local: localCol,
+          remote: remoteCol,
+          isApplied: true,
+          isMismatched: false
+        });
+      } else {
+        // Mismatched ledger row
+        results.push({
+          local: localCol,
+          remote: remoteCol,
+          isApplied: false,
+          isMismatched: true
+        });
+      }
+    } else if (isLocalTs && !isRemoteTs) {
+      // Local-only unapplied migration
+      results.push({
+        local: localCol,
+        remote: null,
+        isApplied: false,
+        isMismatched: false
+      });
+    } else if (!isLocalTs && isRemoteTs) {
+      // Remote-only migration (applied on remote but absent locally)
+      results.push({
+        local: null,
+        remote: remoteCol,
+        isApplied: true,
+        isMismatched: false
+      });
+    }
   }
 
   if (results.length === 0) {

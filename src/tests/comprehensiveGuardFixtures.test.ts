@@ -41,6 +41,70 @@ export function runComprehensiveGuardFixtures() {
   console.log('======================================================================\n');
 
   // ---------------------------------------------------------------------------
+  // FIXTURE 1A: NORMAL APPLIED LEDGER ROWS
+  // ---------------------------------------------------------------------------
+  const fixture_normalLedger = `
+| LOCAL          | REMOTE         | TIME (UTC)          |
+|----------------|----------------|---------------------|
+| 20240523000001 | 20240523000001 | 2026-10-09 20:00:00 |
+| 20261006000001 | 20261006000001 | 2026-10-09 20:01:00 |
+`;
+  try {
+    const parsed = parseMigrationListLedger(fixture_normalLedger);
+    const allApplied = parsed.every(p => p.isApplied && p.remote === p.local);
+    recordTest(
+      'Fixture 1A: Normal applied ledger rows',
+      allApplied && parsed.length === 2,
+      `Parsed ${parsed.length} rows; isApplied: [${parsed.map(p => p.isApplied).join(', ')}]; remote: [${parsed.map(p => p.remote).join(', ')}]`,
+      'Must parse as applied (remote matches local, isApplied = true)'
+    );
+  } catch (err: any) {
+    recordTest('Fixture 1A: Normal applied ledger rows', false, err.message, 'Must parse normally');
+  }
+
+  // ---------------------------------------------------------------------------
+  // FIXTURE 1B: REMOTE-ONLY MIGRATION ROW (Present on remote, missing locally)
+  // ---------------------------------------------------------------------------
+  const fixture_remoteOnly = `
+| LOCAL          | REMOTE         | TIME (UTC)          |
+|----------------|----------------|---------------------|
+|                | 20240523000001 | 2026-10-09 20:00:00 |
+`;
+  try {
+    const parsed = parseMigrationListLedger(fixture_remoteOnly);
+    const isRemoteOnly = parsed.length === 1 && parsed[0].local === null && parsed[0].remote === '20240523000001' && parsed[0].isApplied;
+    recordTest(
+      'Fixture 1B: Remote-only migration row',
+      isRemoteOnly,
+      `Parsed ${parsed.length} rows; local: ${parsed[0]?.local}, remote: ${parsed[0]?.remote}, isApplied: ${parsed[0]?.isApplied}`,
+      'Must parse with local = null, remote = 20240523000001, isApplied = true'
+    );
+  } catch (err: any) {
+    recordTest('Fixture 1B: Remote-only migration row', false, err.message, 'Must parse remote-only row');
+  }
+
+  // ---------------------------------------------------------------------------
+  // FIXTURE 1C: MISMATCHED MIGRATION ROW (LOCAL != REMOTE)
+  // ---------------------------------------------------------------------------
+  const fixture_mismatched = `
+| LOCAL          | REMOTE         | TIME (UTC)          |
+|----------------|----------------|---------------------|
+| 20240523000001 | 20261006000001 | 2026-10-09 20:00:00 |
+`;
+  try {
+    const parsed = parseMigrationListLedger(fixture_mismatched);
+    const isMismatched = parsed.length === 1 && parsed[0].isMismatched === true && parsed[0].isApplied === false;
+    recordTest(
+      'Fixture 1C: Mismatched migration row',
+      isMismatched,
+      `Parsed ${parsed.length} rows; local: ${parsed[0]?.local}, remote: ${parsed[0]?.remote}, isMismatched: ${parsed[0]?.isMismatched}, isApplied: ${parsed[0]?.isApplied}`,
+      'Must flag isMismatched = true and isApplied = false when local != remote'
+    );
+  } catch (err: any) {
+    recordTest('Fixture 1C: Mismatched migration row', false, err.message, 'Must parse mismatched row');
+  }
+
+  // ---------------------------------------------------------------------------
   // FIXTURE 1: LOCAL-ONLY MIGRATION ROW WITH A DATE (Must NOT be counted as applied)
   // ---------------------------------------------------------------------------
   const fixture1_localWithDate = `

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { parseMigrationListLedger, validateStagingEnvironment } from './migrationGuardService';
+import { parseMigrationListLedger, validateStagingEnvironment } from '../services/migration/migrationGuardService';
 
 export function runGuardVerificationCli() {
   const args = process.argv.slice(2);
@@ -37,7 +37,8 @@ export function runGuardVerificationCli() {
       const records = parseMigrationListLedger(content);
       for (const r of records) {
         if (r.isApplied) {
-          appliedSet.add(r.local);
+          if (r.local) appliedSet.add(r.local);
+          if (r.remote) appliedSet.add(r.remote);
         }
       }
     }
@@ -70,7 +71,8 @@ export function runGuardVerificationCli() {
       const records = parseMigrationListLedger(content);
       for (const r of records) {
         if (r.isApplied) {
-          appliedSet.add(r.local);
+          if (r.local) appliedSet.add(r.local);
+          if (r.remote) appliedSet.add(r.remote);
         }
       }
     }
