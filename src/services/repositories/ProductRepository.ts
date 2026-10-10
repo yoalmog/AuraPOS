@@ -1,73 +1,109 @@
-import { supabase, isSupabaseConfigured } from '../supabase/supabaseClient.ts';
 import { Product, ProductVariant } from '../../types/pos.ts';
 import { StorageService } from '../storageService.ts';
 import { LocalDB } from '../db/localDatabase.ts';
+import { NativeBridgeService } from '../native/NativeBridgeService.ts';
+import { SyncRepository } from './SyncRepository.ts';
 
+/**
+ * AuraPOS Offline-First Product Repository
+ * Conforming to Sections 1, 7, 37, 38, 53:
+ * - Local database is the primary operational source for the POS
+ * - Zero network requests during product browsing, search, and barcode scanning
+ * - Instant barcode lookup in airplane mode
+ */
 export class ProductRepository {
   /**
-   * Fetch all active products for a store
+   * Fetch all active products from local database first
    */
   static async getAll(storeId: string = 'store_aura_main'): Promise<Product[]> {
-    if (isSupabaseConfigured && supabase) {
+    // 1. Android Native Room SQLite query
+    if (NativeBridgeService.isNativeAndroid()) {
       try {
-        const { data, error } = await supabase
-          .from('products')
-          .select(`
-            *,
-            variants:product_variants(*)
-          `)
-          .eq('store_id', storeId)
-          .eq('is_active', true)
-          .order('name');
-
-        if (error) {
-          console.warn('[ProductRepository] Supabase fetch error, falling back to local storage:', error.message);
-        } else if (data) {
-          const mapped: Product[] = data.map(p => ({
+        const res = await NativeBridgeService.localDb.getProducts();
+        if (res.success && Array.isArray(res.products) && res.products.length > 0) {
+          return res.products.map(p => ({
             id: p.id,
-            storeId: p.store_id,
-            categoryId: p.category_id || '',
+            storeId: p.storeId || storeId,
+            categoryId: p.categoryId || '',
             name: p.name,
             sku: p.sku || '',
             barcode: p.barcode || '',
             description: p.description || '',
             price: Number(p.price),
-            cost: Number(p.cost),
+            cost: Number(p.cost || 0),
             unit: p.unit || 'item',
-            trackInventory: p.track_inventory,
-            stock: Number(p.stock_minimum), // mapped or aggregated with inventory
-            lowStockThreshold: Number(p.stock_minimum),
-            active: p.is_active,
-            isFavorite: p.is_favorite,
-            imageUrl: p.image_url || undefined,
-            variants: Array.isArray((p as any).variants)
-              ? (p as any).variants.map((v: any) => ({
-                  id: v.id,
-                  productId: v.product_id,
-                  name: v.name,
-                  sku: v.sku || '',
-                  barcode: v.barcode || '',
-                  price: Number(v.price),
-                  cost: Number(v.cost),
-                  attributes: v.attributes || {},
-                  active: v.is_active
-                }))
-              : [],
-            createdAt: p.created_at,
-            updatedAt: p.updated_at
+            trackInventory: p.trackInventory !== false,
+            stock: Number(p.stock || 0),
+            lowStockThreshold: Number(p.lowStockThreshold || 0),
+            active: p.active !== false,
+            isFavorite: Boolean(p.isFavorite),
+            imageUrl: p.imageUrl || undefined,
+            createdAt: p.createdAt,
+            updatedAt: p.updatedAt
           }));
-          return mapped;
         }
       } catch (err: any) {
-        console.warn('[ProductRepository] Supabase exception, using local store:', err?.message);
+        console.warn('[ProductRepository] Native local fetch notice:', err?.message);
       }
     }
+
+    // 2. Browser LocalDB / StorageService (Instant & Offline)
+    try {
+      const dbProducts = await LocalDB.getAll<Product>('products');
+      if (dbProducts && dbProducts.length > 0) {
+        return dbProducts.filter(p => p.active !== false);
+      }
+    } catch (_) {}
 
     return StorageService.getProducts();
   }
 
   /**
-   * Get single product by ID
+   * Instant local product search without network calls (Section 38)
+   */
+  static async search(query: string, storeId: string = 'store_aura_main'): Promise<Product[]> {
+    const q = query.trim().toLowerCase();
+    if (!q) return this.getAll(storeId);
+
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        const res = await NativeBridgeService.localDb.getProducts(q);
+        if (res.success && Array.isArray(res.products)) {
+          return res.products;
+        }
+      } catch (_) {}
+    }
+
+    const all = await this.getAll(storeId);
+    return all.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.sku && p.sku.toLowerCase().includes(q)) ||
+      (p.barcode && p.barcode.toLowerCase().includes(q))
+    );
+  }
+
+  /**
+   * Barcode search: Scanner -> Local ProductRepository -> Product -> Cart (Section 37)
+   */
+  static async getByBarcode(barcode: string, storeId: string = 'store_aura_main'): Promise<Product | null> {
+    const code = barcode.trim();
+    if (!code) return null;
+
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        const res = await NativeBridgeService.localDb.getProductByBarcode(code);
+        if (res.success && res.product) {
+          return res.product;
+        }
+      } catch (_) {}
+    }
+
+    const all = await this.getAll(storeId);
+    return all.find(p => p.barcode?.trim() === code) || null;
+  }
+
+  /**
+   * Get single product by ID from local database
    */
   static async getById(id: string): Promise<Product | null> {
     const products = await this.getAll();
@@ -75,79 +111,42 @@ export class ProductRepository {
   }
 
   /**
-   * Insert new product
+   * Insert new product locally first (Section 7)
    */
   static async create(product: Product): Promise<Product> {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('products')
-          .insert({
-            id: product.id.length === 36 ? product.id : undefined,
-            store_id: product.storeId || 'store_aura_main',
-            category_id: product.categoryId || null,
-            name: product.name,
-            sku: product.sku || null,
-            barcode: product.barcode || null,
-            description: product.description || null,
-            price: product.price,
-            cost: product.cost,
-            unit: product.unit || 'item',
-            track_inventory: product.trackInventory,
-            stock_minimum: product.lowStockThreshold || 0,
-            is_favorite: Boolean(product.isFavorite),
-            is_active: product.active !== false,
-            image_url: product.imageUrl || null
-          })
-          .select()
-          .single();
+    const nowIso = new Date().toISOString();
+    const prodId = product.id && product.id.length === 36 ? product.id : crypto.randomUUID();
 
-        if (error) {
-          console.warn('[ProductRepository] Supabase insert error, persisting locally:', error.message);
-        } else if (data) {
-          product.id = data.id;
-        }
-      } catch (e: any) {
-        console.warn('[ProductRepository] Exception on create:', e?.message);
-      }
-    }
+    const createdProduct: Product = {
+      ...product,
+      id: prodId,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
 
-    // Persist locally for immediate offline responsiveness
+    // 1. Write to local database
     const current = StorageService.getProducts();
-    const updated = [product, ...current.filter(p => p.id !== product.id)];
+    const updated = [createdProduct, ...current.filter(p => p.id !== prodId)];
     StorageService.saveProducts(updated);
-    await LocalDB.put('products', product);
+    await LocalDB.put('products', createdProduct);
 
-    return product;
+    // 2. Enqueue sync event
+    await SyncRepository.recordEvent({
+      clientEventId: `event_prod_${prodId}`,
+      storeId: createdProduct.storeId || 'store_aura_main',
+      entityType: 'product',
+      entityId: prodId,
+      operation: 'INSERT',
+      payload: createdProduct
+    });
+
+    return createdProduct;
   }
 
   /**
-   * Update existing product
+   * Update existing product locally first
    */
   static async update(id: string, partial: Partial<Product>): Promise<Product | null> {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const payload: Record<string, any> = { updated_at: new Date().toISOString() };
-        if (partial.name !== undefined) payload.name = partial.name;
-        if (partial.price !== undefined) payload.price = partial.price;
-        if (partial.cost !== undefined) payload.cost = partial.cost;
-        if (partial.categoryId !== undefined) payload.category_id = partial.categoryId || null;
-        if (partial.sku !== undefined) payload.sku = partial.sku || null;
-        if (partial.barcode !== undefined) payload.barcode = partial.barcode || null;
-        if (partial.description !== undefined) payload.description = partial.description || null;
-        if (partial.unit !== undefined) payload.unit = partial.unit;
-        if (partial.trackInventory !== undefined) payload.track_inventory = partial.trackInventory;
-        if (partial.lowStockThreshold !== undefined) payload.stock_minimum = partial.lowStockThreshold;
-        if (partial.isFavorite !== undefined) payload.is_favorite = partial.isFavorite;
-        if (partial.active !== undefined) payload.is_active = partial.active;
-        if (partial.imageUrl !== undefined) payload.image_url = partial.imageUrl || null;
-
-        await supabase.from('products').update(payload).eq('id', id);
-      } catch (e: any) {
-        console.warn('[ProductRepository] Exception on update:', e?.message);
-      }
-    }
-
     const current = StorageService.getProducts();
     const idx = current.findIndex(p => p.id === id);
     if (idx === -1) return null;
@@ -161,25 +160,37 @@ export class ProductRepository {
     StorageService.saveProducts(current);
     await LocalDB.put('products', merged);
 
+    // Enqueue sync event
+    await SyncRepository.recordEvent({
+      clientEventId: `event_prod_upd_${id}_${Date.now()}`,
+      storeId: merged.storeId || 'store_aura_main',
+      entityType: 'product',
+      entityId: id,
+      operation: 'UPDATE',
+      payload: merged
+    });
+
     return merged;
   }
 
   /**
-   * Soft-delete product
+   * Soft-delete product locally first
    */
   static async delete(id: string): Promise<boolean> {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.from('products').update({ is_active: false }).eq('id', id);
-      } catch (e: any) {
-        console.warn('[ProductRepository] Exception on soft-delete:', e?.message);
-      }
-    }
-
     const current = StorageService.getProducts();
     const filtered = current.filter(p => p.id !== id);
     StorageService.saveProducts(filtered);
     await LocalDB.delete('products', id);
+
+    await SyncRepository.recordEvent({
+      clientEventId: `event_prod_del_${id}_${Date.now()}`,
+      storeId: 'store_aura_main',
+      entityType: 'product',
+      entityId: id,
+      operation: 'DELETE',
+      payload: { id }
+    });
+
     return true;
   }
 }

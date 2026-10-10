@@ -1,151 +1,87 @@
-import { supabase, isSupabaseConfigured } from '../supabase/supabaseClient.ts';
 import { Sale, SaleItem, PaymentRecord } from '../../types/pos.ts';
 import { StorageService } from '../storageService.ts';
 import { LocalDB } from '../db/localDatabase.ts';
+import { NativeBridgeService } from '../native/NativeBridgeService.ts';
+import { SyncEngine } from '../sync/SyncEngine.ts';
 
+/**
+ * AuraPOS Offline-First Sales Repository
+ * Conforming to Sections 7, 8, 9, 16:
+ * - Local Database is the FIRST write target for Android POS operations
+ * - Atomic local transaction writes sale, items, payment, inventory movement, sync event, audit log
+ * - Cash sales work 100% offline with zero network dependency
+ * - Cloud synchronization happens separately via SyncEngine
+ */
 export class SalesRepository {
   /**
-   * Fetch sales history for store
+   * Fetch sales history from local database first
    */
   static async getAll(storeId: string = 'store_aura_main', limit: number = 100): Promise<Sale[]> {
-    if (isSupabaseConfigured && supabase) {
+    if (NativeBridgeService.isNativeAndroid()) {
       try {
-        const { data, error } = await supabase
-          .from('sales')
-          .select(`
-            *,
-            items:sale_items(*),
-            payments:payments(*)
-          `)
-          .eq('store_id', storeId)
-          .order('created_at', { ascending: false })
-          .limit(limit);
-
-        if (!error && data) {
-          const mapped: Sale[] = data.map(s => ({
+        const res = await NativeBridgeService.localDb.getSales(limit);
+        if (res.success && Array.isArray(res.sales) && res.sales.length > 0) {
+          return res.sales.map(s => ({
             id: s.id,
-            storeId: s.store_id,
-            receiptNumber: s.receipt_number,
-            customerId: s.customer_id || undefined,
-            employeeId: s.cashier_id || 'emp_owner',
+            storeId: s.storeId || storeId,
+            receiptNumber: s.receiptNumber,
+            customerId: s.customerId || undefined,
+            employeeId: s.cashierId || 'emp_owner',
             employeeName: 'Cashier',
-            items: Array.isArray((s as any).items)
-              ? (s as any).items.map((i: any) => ({
-                  id: i.id,
-                  saleId: i.sale_id,
-                  productId: i.product_id || '',
-                  variantId: i.variant_id || undefined,
-                  productName: i.product_name_snapshot,
-                  quantity: Number(i.quantity),
-                  unitPrice: Number(i.unit_price),
-                  discountAmount: Number(i.discount),
-                  taxAmount: Number(i.tax),
-                  lineTotal: Number(i.total)
-                }))
-              : [],
+            items: [],
             subtotal: Number(s.subtotal),
-            discountAmount: Number(s.discount_total),
-            taxAmount: Number(s.tax_total),
+            discountAmount: Number(s.discountTotal || 0),
+            taxAmount: Number(s.taxTotal || 0),
             taxRate: 0,
             total: Number(s.total),
-            payments: Array.isArray((s as any).payments)
-              ? (s as any).payments.map((p: any) => ({
-                  id: p.id,
-                  saleId: p.sale_id,
-                  method: p.method,
-                  amount: Number(p.amount),
-                  tendered: p.tendered ? Number(p.tendered) : undefined,
-                  change: p.change ? Number(p.change) : undefined,
-                  transactionReference: p.provider_reference || undefined,
-                  status: p.status === 'completed' ? 'completed' : 'pending',
-                  createdAt: p.created_at
-                }))
-              : [],
+            payments: [],
             status: s.status,
-            isOffline: s.is_offline,
-            createdAt: s.client_created_at || s.created_at,
-            updatedAt: s.updated_at
+            isOffline: Boolean(s.isOffline),
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt || s.createdAt
           }));
-          return mapped;
         }
       } catch (err: any) {
-        console.warn('[SalesRepository] Supabase fetch exception:', err?.message);
+        console.warn('[SalesRepository] Native local fetch notice:', err?.message);
       }
     }
+
+    try {
+      const dbSales = await LocalDB.getAll<Sale>('sales');
+      if (dbSales && dbSales.length > 0) {
+        return dbSales.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, limit);
+      }
+    } catch (_) {}
 
     return StorageService.getSales();
   }
 
   /**
-   * Record new completed sale atomically with items and payments
+   * Record new completed sale atomically to local database first (Requirements 7, 8, 9)
    */
   static async recordSale(sale: Sale): Promise<Sale> {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data: saleRow, error: saleErr } = await supabase
-          .from('sales')
-          .insert({
-            id: sale.id.length === 36 ? sale.id : undefined,
-            store_id: sale.storeId || 'store_aura_main',
-            customer_id: sale.customerId && sale.customerId.length === 36 ? sale.customerId : null,
-            cashier_id: sale.employeeId && sale.employeeId.length === 36 ? sale.employeeId : null,
-            receipt_number: sale.receiptNumber,
-            status: sale.status,
-            subtotal: sale.subtotal,
-            discount_total: sale.discountAmount,
-            tax_total: sale.taxAmount,
-            total: sale.total,
-            is_offline: Boolean(sale.isOffline),
-            client_created_at: sale.createdAt
-          })
-          .select()
-          .single();
+    const saleId = sale.id && sale.id.length === 36 ? sale.id : (sale.id.startsWith('sale_') ? sale.id : crypto.randomUUID());
+    const finalSale: Sale = {
+      ...sale,
+      id: saleId,
+      isOffline: !SyncEngine.isOnline()
+    };
 
-        if (saleErr) {
-          console.warn('[SalesRepository] Supabase sale insert error:', saleErr.message);
-        } else if (saleRow) {
-          sale.id = saleRow.id;
+    // 1. ATOMIC LOCAL WRITE (First target)
+    await LocalDB.recordSaleAtomic(finalSale);
 
-          // Insert sale items snapshot
-          if (sale.items && sale.items.length > 0) {
-            const itemsPayload = sale.items.map(item => ({
-              sale_id: saleRow.id,
-              product_id: item.productId && item.productId.length === 36 ? item.productId : null,
-              variant_id: item.variantId && item.variantId.length === 36 ? item.variantId : null,
-              product_name_snapshot: item.productName,
-              quantity: item.quantity,
-              unit_price: item.unitPrice,
-              discount: item.discountAmount,
-              tax: item.taxAmount,
-              total: item.lineTotal
-            }));
-            await supabase.from('sale_items').insert(itemsPayload);
-          }
+    // 2. Update reactive local cache
+    const currentSales = StorageService.getSales();
+    const updated = [finalSale, ...currentSales.filter(s => s.id !== finalSale.id)];
+    StorageService.saveSales(updated);
 
-          // Insert payments
-          if (sale.payments && sale.payments.length > 0) {
-            const paymentsPayload = sale.payments.map(p => ({
-              sale_id: saleRow.id,
-              method: p.method,
-              amount: p.amount,
-              tendered: p.tendered || null,
-              change: p.change || null,
-              status: p.status || 'completed'
-            }));
-            await supabase.from('payments').insert(paymentsPayload);
-          }
-        }
-      } catch (e: any) {
-        console.warn('[SalesRepository] Exception recording sale to Supabase:', e?.message);
-      }
+    // 3. Trigger background sync asynchronously without blocking the sale
+    if (SyncEngine.isOnline()) {
+      SyncEngine.syncNow().catch(err => {
+        console.warn('Background sync cycle warning after sale:', err);
+      });
     }
 
-    // Persist locally for immediate offline reliability
-    const currentSales = StorageService.getSales();
-    const updated = [sale, ...currentSales];
-    StorageService.saveSales(updated);
-    await LocalDB.put('sales', sale);
-
-    return sale;
+    return finalSale;
   }
 }

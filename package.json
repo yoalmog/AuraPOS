@@ -9,7 +9,13 @@
     "build": "vite build && rm -rf android/app/src/main/assets/* && mkdir -p android/app/src/main/assets && cp -r dist/* android/app/src/main/assets/",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "db:lint": "supabase db lint",
+    "db:list": "supabase migration list",
+    "db:push": "supabase db push",
+    "test": "tsx src/tests/phase4aCloudFoundation.test.ts && tsx src/tests/securityAndMigrationGuards.test.ts",
+    "test:security": "tsx src/tests/securityAndMigrationGuards.test.ts",
+    "test:real-supabase": "tsx src/tests/realSupabaseIntegration.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

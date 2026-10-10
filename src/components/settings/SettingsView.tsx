@@ -30,6 +30,7 @@ import { PrinterSettings } from './printers/PrinterSettings.tsx';
 import { AccessibilitySettingsTab } from './accessibility/AccessibilitySettingsTab.tsx';
 import { AppearanceSettingsTab } from './appearance/AppearanceSettingsTab.tsx';
 import { SystemDiagnostics } from './SystemDiagnostics.tsx';
+import { SyncCenterTab } from './sync/SyncCenterTab.tsx';
 import { ReceiptConfigTab } from './receipt/ReceiptConfigTab.tsx';
 import { THEME_PRESETS, ThemeColor, applyThemeVariables } from '../../utils/theme.ts';
 import { STORE_LOGO_PRESETS } from '../../utils/productImages.ts';
@@ -206,7 +207,7 @@ export const SettingsView: React.FC = () => {
           })}
         </div>
 
-        {/* Content Form or Printers / Accessibility / Appearance Management */}
+        {/* Content Form or Printers / Accessibility / Appearance / Sync Center Management */}
         {activeTab === 'appearance' ? (
           <AppearanceSettingsTab />
         ) : activeTab === 'printers' ? (
@@ -215,6 +216,8 @@ export const SettingsView: React.FC = () => {
           <AccessibilitySettingsTab />
         ) : activeTab === 'diagnostics' ? (
           <SystemDiagnostics />
+        ) : activeTab === 'data' ? (
+          <SyncCenterTab />
         ) : activeTab === 'receipt' ? (
           <form onSubmit={handleSave} className="space-y-6">
             <ReceiptConfigTab formData={formData} onChange={handleChange} onSave={handleSave} />
@@ -562,50 +565,6 @@ export const SettingsView: React.FC = () => {
                     </span>
                   </div>
                 </label>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'data' && (
-            <div className="space-y-5">
-              <h3 className="text-sm font-bold text-slate-900">Offline Queue & Storage Engine</h3>
-
-              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-slate-800">Pending Offline Sales Queue</span>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {pendingSyncCount > 0
-                      ? `${pendingSyncCount} transactions stored locally waiting to upload.`
-                      : 'Sync queue is clear. All transactions synced with database.'}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={triggerSync}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors shadow-2xs"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Sync Now</span>
-                </button>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-rose-700">Clear Local Database</span>
-                  <p className="text-xs text-slate-500">
-                    Clears local transaction cache, print queue, and resets the register to a clean state.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleResetData}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reset All Data</span>
-                </button>
               </div>
             </div>
           )}

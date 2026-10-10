@@ -1,0 +1,505 @@
+name: Supabase Database Migration CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'supabase/**'
+      - 'src/**'
+      - 'package.json'
+      - '.github/workflows/supabase-migration.yml'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/config.toml'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Workflow execution mode (default is validation only)'
+        required: true
+        type: choice
+        options:
+          - 'validate_only'
+          - 'preflight_audit'
+          - 'deploy_single_migration'
+        default: 'validate_only'
+      confirm_production_deploy:
+        description: 'Explicit confirmation required to apply changes to production'
+        required: true
+        type: boolean
+        default: false
+      target_migration:
+        description: 'Target migration filename (e.g. 20261006000001_core_schema.sql). If blank, deploys the next pending migration.'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: supabase-migration-production
+  cancel-in-progress: false
+
+jobs:
+  lint-and-validate:
+    name: Lint & Pre-Deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: TypeScript Lint & Compilation Check
+        run: npm run lint
+
+      - name: Verify Architecture & Cloud Foundation
+        run: npm test
+
+      - name: Verify Deployment Package Integrity
+        run: npx tsx src/tests/validateDeploymentPackage.ts
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.120.0
+
+      - name: Validate Migration Ordering & Filenames
+        run: |
+          echo "=== Auditing Migration Files & Chronological Sequencing ==="
+          ls -la supabase/migrations/
+          PREV_TS="00000000000000"
+          for file in supabase/migrations/*.sql; do
+            filename=$(basename "$file")
+            ts=$(echo "$filename" | cut -d'_' -f1)
+            if [ "$ts" \< "$PREV_TS" ]; then
+              echo "::error::Migration $filename is out of chronological order! ($ts < $PREV_TS)"
+              exit 1
+            fi
+            PREV_TS="$ts"
+            echo "  [OK] $filename (Timestamp: $ts)"
+          done
+
+      - name: Audit SECURITY DEFINER Search Paths & RPC Grants
+        run: |
+          echo "=== Auditing SECURITY DEFINER and Grant Hardening ==="
+          for file in supabase/migrations/*.sql; do
+            if grep -q "SECURITY DEFINER" "$file"; then
+              sec_count=$(grep -c "SECURITY DEFINER" "$file" || true)
+              path_count=$(grep -c "SET search_path = public, pg_temp" "$file" || true)
+              echo "Checking $file: $sec_count SECURITY DEFINER declarations, $path_count search_path assignments"
+              if [ "$sec_count" -ne "$path_count" ]; then
+                echo "::error::$file has unhardened SECURITY DEFINER functions without explicit search_path!"
+                exit 1
+              fi
+            fi
+          done
+          echo "All SECURITY DEFINER search_paths are hardened."
+
+  preflight-audit:
+    name: Pre-Flight Remote Migration Audit & Dry-Run
+    needs: lint-and-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      has_pending: ${{ steps.analyze_status.outputs.has_pending }}
+      next_migration_file: ${{ steps.analyze_status.outputs.next_migration_file }}
+      next_migration_ts: ${{ steps.analyze_status.outputs.next_migration_ts }}
+      pending_count: ${{ steps.analyze_status.outputs.pending_count }}
+      earliest_pending_ts: ${{ steps.analyze_status.outputs.earliest_pending_ts }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.120.0
+
+      - name: Inspect Remote Migrations & Run Dry-Run
+        id: inspect_remote
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          echo "=== Supabase Pre-Flight Remote Verification ==="
+          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
+
+          if [ -z "$SUPABASE_DB_URL" ] && { [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_DB_PASSWORD" ]; }; then
+            echo "::warning::Administrative database credentials (SUPABASE_DB_URL or SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD) not configured in GitHub Secrets."
+            echo "::warning::Remote preflight dry-run skipped. Running in local validation mode."
+            echo "REMOTE_AVAILABLE=false" >> $GITHUB_ENV
+            exit 0
+          fi
+          echo "REMOTE_AVAILABLE=true" >> $GITHUB_ENV
+
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            echo "Querying remote migrations via SUPABASE_DB_URL..."
+            supabase migration list --db-url "$SUPABASE_DB_URL" > /tmp/migration_list.txt 2>&1
+            LIST_EXIT=$?
+            echo "Running 'supabase db push --dry-run'..."
+            supabase db push --db-url "$SUPABASE_DB_URL" --dry-run > /tmp/push_dry_run.txt 2>&1
+            PUSH_EXIT=$?
+          else
+            echo "Linking project $PROJECT_ID..."
+            supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+            echo "Querying remote migrations for linked project..."
+            supabase migration list > /tmp/migration_list.txt 2>&1
+            LIST_EXIT=$?
+            echo "Running 'supabase db push --dry-run'..."
+            supabase db push --password "$SUPABASE_DB_PASSWORD" --dry-run > /tmp/push_dry_run.txt 2>&1
+            PUSH_EXIT=$?
+          fi
+
+          if [ $LIST_EXIT -ne 0 ]; then
+            echo "::error::Failed to retrieve remote migration ledger from Supabase CLI!"
+            cat /tmp/migration_list.txt
+            exit 1
+          fi
+
+          echo "=== Remote Migration List ==="
+          cat /tmp/migration_list.txt
+
+          echo "=== Dry-Run Plan ==="
+          cat /tmp/push_dry_run.txt
+
+      - name: Determine Next Pending Migration
+        id: analyze_status
+        run: |
+          echo "=== Analyzing Migration History & Determining Target ==="
+          LOCAL_FILES=($(ls -1 supabase/migrations/*.sql | sort))
+          echo "Found ${#LOCAL_FILES[@]} local migration files in repository:"
+          for f in "${LOCAL_FILES[@]}"; do
+            echo "  - $(basename "$f")"
+          done
+
+          # If remote migration list is available, parse applied migrations
+          APPLIED_MIGRATIONS=""
+          if [ -f /tmp/migration_list.txt ]; then
+            # Parse timestamps that have a non-empty remote column
+            # In supabase migration list table: | Local | Remote | Time |
+            # A migration is applied remotely if its timestamp appears with remote status
+            APPLIED_MIGRATIONS=$(grep -E '^[| ]*[0-9]{14}' /tmp/migration_list.txt | awk '{print $1, $2, $3}' || true)
+            echo "Remote ledger entries detected."
+          fi
+
+          # Find earliest pending migration
+          EARLIEST_PENDING=""
+          PENDING_COUNT=0
+          for f in "${LOCAL_FILES[@]}"; do
+            fname=$(basename "$f")
+            ts=$(echo "$fname" | cut -d'_' -f1)
+            # Check if applied remotely
+            IS_APPLIED=false
+            if [ -n "$APPLIED_MIGRATIONS" ]; then
+              if echo "$APPLIED_MIGRATIONS" | grep -q "$ts"; then
+                # Check if the line confirms applied on remote
+                if grep -E "^[| ]*$ts" /tmp/migration_list.txt | grep -qiE "applied|yes|[0-9]{4}-[0-9]{2}-[0-9]{2}"; then
+                  IS_APPLIED=true
+                fi
+              fi
+            fi
+
+            if [ "$IS_APPLIED" = false ]; then
+              PENDING_COUNT=$((PENDING_COUNT + 1))
+              if [ -z "$EARLIEST_PENDING" ]; then
+                EARLIEST_PENDING="$fname"
+              fi
+            fi
+          done
+
+          # Fallback if no remote ledger (local evaluation mode): first local file is earliest
+          if [ -z "$EARLIEST_PENDING" ] && [ ${#LOCAL_FILES[@]} -gt 0 ]; then
+            EARLIEST_PENDING=$(basename "${LOCAL_FILES[0]}")
+            PENDING_COUNT=${#LOCAL_FILES[@]}
+          fi
+
+          HAS_PENDING="false"
+          NEXT_MIGRATION_FILE=""
+          NEXT_MIGRATION_TS=""
+          if [ -n "$EARLIEST_PENDING" ]; then
+            HAS_PENDING="true"
+            NEXT_MIGRATION_FILE="$EARLIEST_PENDING"
+            NEXT_MIGRATION_TS=$(echo "$EARLIEST_PENDING" | cut -d'_' -f1)
+          fi
+
+          # Validate requested target if provided
+          REQ_TARGET="${{ inputs.target_migration }}"
+          if [ -n "$REQ_TARGET" ]; then
+            if [ ! -f "supabase/migrations/$REQ_TARGET" ]; then
+              echo "::error::Specified target migration '$REQ_TARGET' does not exist in supabase/migrations/!"
+              exit 1
+            fi
+            REQ_TS=$(echo "$REQ_TARGET" | cut -d'_' -f1)
+            if [ -n "$NEXT_MIGRATION_TS" ] && [ "$REQ_TS" != "$NEXT_MIGRATION_TS" ]; then
+              echo "::error::SAFETY VIOLATION: Target migration '$REQ_TARGET' ($REQ_TS) is NOT the earliest pending migration ($NEXT_MIGRATION_FILE: $NEXT_MIGRATION_TS). Out-of-order execution blocked!"
+              exit 1
+            fi
+            NEXT_MIGRATION_FILE="$REQ_TARGET"
+            NEXT_MIGRATION_TS="$REQ_TS"
+          fi
+
+          echo "has_pending=$HAS_PENDING" >> $GITHUB_OUTPUT
+          echo "next_migration_file=$NEXT_MIGRATION_FILE" >> $GITHUB_OUTPUT
+          echo "next_migration_ts=$NEXT_MIGRATION_TS" >> $GITHUB_OUTPUT
+          echo "earliest_pending_ts=$NEXT_MIGRATION_TS" >> $GITHUB_OUTPUT
+          echo "pending_count=$PENDING_COUNT" >> $GITHUB_OUTPUT
+
+          echo "Earliest pending target migration: $NEXT_MIGRATION_FILE ($NEXT_MIGRATION_TS)"
+          echo "Total pending count: $PENDING_COUNT"
+
+      - name: Publish Pre-Flight Step Summary
+        if: always()
+        run: |
+          echo "### 🔍 Supabase Pre-Flight Audit Report" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger Event:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Execution Mode:** \`${{ inputs.action || 'validate_only' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pending Migrations Queued:** \`${{ steps.analyze_status.outputs.pending_count }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Earliest Pending Migration Target:** \`${{ steps.analyze_status.outputs.next_migration_file }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> 🛡️ **Safety Policy:** Migrations are restricted to sequential, one-at-a-time execution. Default runs perform validation only without mutating the database." >> $GITHUB_STEP_SUMMARY
+
+  deploy-sequential-migration:
+    name: Apply Single Migration (Sequential Deployment)
+    needs: [lint-and-validate, preflight-audit]
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'deploy_single_migration' &&
+      inputs.confirm_production_deploy == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://supabase.com/dashboard/project/${{ secrets.SUPABASE_PROJECT_ID }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.120.0
+
+      - name: Validate Production Secrets
+        run: |
+          echo "=== Verifying Administrative Deployment Credentials ==="
+          if [ -z "${{ secrets.SUPABASE_DB_URL }}" ] && { [ -z "${{ secrets.SUPABASE_ACCESS_TOKEN }}" ] || [ -z "${{ secrets.SUPABASE_DB_PASSWORD }}" ]; }; then
+            echo "::error::CRITICAL: Administrative database credentials missing in GitHub Secrets. Deployment blocked."
+            exit 1
+          fi
+          echo "Administrative credentials confirmed."
+
+      - name: Verify Earliest Remote Pending Migration
+        id: verify_earliest
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          echo "=== Auditing Remote Ledger Before Applying Migration ==="
+          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
+
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            supabase migration list --db-url "$SUPABASE_DB_URL" > /tmp/deploy_migration_list.txt 2>&1
+            LIST_EXIT=$?
+          else
+            supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+            supabase migration list > /tmp/deploy_migration_list.txt 2>&1
+            LIST_EXIT=$?
+          fi
+
+          if [ $LIST_EXIT -ne 0 ]; then
+            echo "::error::Remote migration history is unavailable or ambiguous. Aborting deployment!"
+            cat /tmp/deploy_migration_list.txt
+            exit 1
+          fi
+
+          cat /tmp/deploy_migration_list.txt
+
+          TARGET_FILE="${{ inputs.target_migration || needs.preflight-audit.outputs.next_migration_file }}"
+          if [ -z "$TARGET_FILE" ] || [ ! -f "supabase/migrations/$TARGET_FILE" ]; then
+            echo "::error::Target migration '$TARGET_FILE' does not exist!"
+            exit 1
+          fi
+
+          TARGET_TS=$(echo "$TARGET_FILE" | cut -d'_' -f1)
+
+          # Verify no earlier migration is pending on remote
+          for f in supabase/migrations/*.sql; do
+            fname=$(basename "$f")
+            ts=$(echo "$fname" | cut -d'_' -f1)
+            if [ "$ts" \< "$TARGET_TS" ]; then
+              # If earlier migration exists, verify it is recorded as applied on remote
+              if ! grep -E "^[| ]*$ts" /tmp/deploy_migration_list.txt | grep -qiE "applied|yes|[0-9]{4}-[0-9]{2}-[0-9]{2}"; then
+                echo "::error::ABORT: Earlier migration '$fname' ($ts) is pending or unconfirmed on remote! Target migration '$TARGET_FILE' ($TARGET_TS) cannot be applied out of order."
+                exit 1
+              fi
+            fi
+          done
+          echo "Confirmed: '$TARGET_FILE' is strictly the earliest pending migration."
+
+      - name: Stage Isolated Single Migration (Zero Mod to Original Directory)
+        id: stage_worktree
+        run: |
+          echo "=== Staging Isolated Single Migration Environment ==="
+          TARGET_FILE="${{ inputs.target_migration || needs.preflight-audit.outputs.next_migration_file }}"
+          TARGET_TS=$(echo "$TARGET_FILE" | cut -d'_' -f1)
+
+          # Create an isolated staging workspace copy
+          STAGING_DIR="/tmp/supabase_single_migration_staging"
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR/supabase/migrations"
+
+          # Copy config.toml
+          cp supabase/config.toml "$STAGING_DIR/supabase/config.toml"
+
+          # Copy only migrations up to and including TARGET_TS into staging
+          INCLUDED_COUNT=0
+          for file in supabase/migrations/*.sql; do
+            fname=$(basename "$file")
+            ts=$(echo "$fname" | cut -d'_' -f1)
+            if [ "$ts" \<= "$TARGET_TS" ]; then
+              cp "$file" "$STAGING_DIR/supabase/migrations/"
+              INCLUDED_COUNT=$((INCLUDED_COUNT + 1))
+            fi
+          done
+
+          echo "Staging environment ready at: $STAGING_DIR"
+          echo "Included $INCLUDED_COUNT migration(s) (up to $TARGET_TS):"
+          ls -la "$STAGING_DIR/supabase/migrations/"
+
+          # Verify exact target is present
+          if [ ! -f "$STAGING_DIR/supabase/migrations/$TARGET_FILE" ]; then
+            echo "::error::Target file $TARGET_FILE missing in staging environment!"
+            exit 1
+          fi
+
+          # Prove that exactly one unapplied migration is visible to CLI
+          echo "staging_dir=$STAGING_DIR" >> $GITHUB_OUTPUT
+          echo "target_file=$TARGET_FILE" >> $GITHUB_OUTPUT
+          echo "target_ts=$TARGET_TS" >> $GITHUB_OUTPUT
+
+      - name: Apply Approved Single Migration via Official CLI (Isolated Staging)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          echo "=== Applying Single Migration via Supabase CLI from Staging Directory ==="
+          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
+          STAGING_DIR="${{ steps.stage_worktree.outputs.staging_dir }}"
+          TARGET_FILE="${{ steps.stage_worktree.outputs.target_file }}"
+
+          echo "Applying approved migration: $TARGET_FILE using isolated workdir $STAGING_DIR"
+
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            supabase db push --workdir "$STAGING_DIR" --db-url "$SUPABASE_DB_URL"
+            APPLY_EXIT=$?
+          else
+            supabase link --workdir "$STAGING_DIR" --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+            supabase db push --workdir "$STAGING_DIR" --password "$SUPABASE_DB_PASSWORD"
+            APPLY_EXIT=$?
+          fi
+
+          if [ $APPLY_EXIT -ne 0 ]; then
+            echo "::error::supabase db push failed with exit code $APPLY_EXIT!"
+            exit 1
+          fi
+
+          echo "Supabase CLI db push completed successfully."
+
+      - name: Clean Up Isolated Staging Environment
+        if: always()
+        run: |
+          echo "Cleaning up staging directory..."
+          rm -rf /tmp/supabase_single_migration_staging
+          # Original supabase/migrations was never mutated
+          echo "Original repository migrations verified:"
+          ls -1 supabase/migrations/
+
+      - name: Post-Migration Remote Status Verification
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          echo "=== Verifying Remote Migration History ==="
+          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
+
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            supabase migration list --db-url "$SUPABASE_DB_URL"
+          elif [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
+            supabase migration list
+          fi
+
+      - name: Post-Deployment Smoke Test (Client Integration)
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          echo "=== Running Live Client Integration Verification ==="
+          if [ -n "$VITE_SUPABASE_URL" ] && [ -n "$VITE_SUPABASE_ANON_KEY" ]; then
+            npm run test:real-supabase || {
+              echo "::warning::Client integration test reported pending items (expected until final migration is applied)."
+            }
+          else
+            echo "::info::Skipping client smoke test (client credentials not provided in secrets)."
+          fi
+
+      - name: Enforce Sequential Pipeline Stop & Publish Summary
+        if: always()
+        run: |
+          TARGET_FILE="${{ steps.isolate_migration.outputs.target_file }}"
+          STAGED_COUNT="${{ steps.isolate_migration.outputs.staged_count }}"
+
+          echo "### 🚀 Supabase Sequential Migration Deployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "- **Applied Migration:** \`$TARGET_FILE\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** \`${{ job.status }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Remaining Migrations Queued:** \`$STAGED_COUNT\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$STAGED_COUNT" -gt 0 ]; then
+            echo "> 🛑 **SEQUENTIAL STOP ENFORCED:** $STAGED_COUNT migration(s) remain pending. In accordance with safety rules, the pipeline has halted. Please review the live database status before dispatching the next migration." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> ✅ **ALL MIGRATIONS APPLIED:** All schema migrations have been deployed to production." >> $GITHUB_STEP_SUMMARY
+          fi

@@ -756,7 +756,36 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      sync_process_sale: {
+        Args: {
+          p_sale: Json;
+          p_items: Json;
+          p_payments: Json;
+          p_movements: Json;
+          p_client_event_id?: string | null;
+        };
+        Returns: Json;
+      };
+      sync_process_cash_shift: {
+        Args: {
+          p_shift: Json;
+          p_movements?: Json | null;
+          p_client_event_id?: string | null;
+        };
+        Returns: Json;
+      };
+      sync_pull_changes: {
+        Args: {
+          p_store_id: string;
+          p_entity_type: string;
+          p_cursor?: string | null;
+        };
+        Returns: { data: Json }[];
+      };
+      sync_backend_health: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
     };
     Enums: {
       [_ in never]: never;

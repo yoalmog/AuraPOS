@@ -1,100 +1,161 @@
-import { supabase, isSupabaseConfigured } from '../supabase/supabaseClient.ts';
 import { Customer } from '../../types/pos.ts';
 import { StorageService } from '../storageService.ts';
 import { LocalDB } from '../db/localDatabase.ts';
+import { NativeBridgeService } from '../native/NativeBridgeService.ts';
+import { SyncRepository } from './SyncRepository.ts';
 
+/**
+ * AuraPOS Offline-First Customer Repository
+ * Conforming to Sections 1, 7, 40:
+ * - Customer search operates locally from local database
+ * - If created offline, saves locally first with UUID and enqueues sync event
+ */
 export class CustomerRepository {
   /**
-   * Fetch all active customers
+   * Fetch all active customers from local database first
    */
   static async getAll(storeId: string = 'store_aura_main'): Promise<Customer[]> {
-    if (isSupabaseConfigured && supabase) {
+    if (NativeBridgeService.isNativeAndroid()) {
       try {
-        const { data, error } = await supabase
-          .from('customers')
-          .select('*')
-          .eq('store_id', storeId)
-          .eq('is_active', true)
-          .order('name');
-
-        if (error) {
-          console.warn('[CustomerRepository] Supabase fetch error, fallback to local storage:', error.message);
-        } else if (data) {
-          return data.map(c => {
-            const parts = c.name.split(' ');
-            const firstName = parts[0] || '';
-            const lastName = parts.slice(1).join(' ') || '';
+        const res = await NativeBridgeService.localDb.getCustomers();
+        if (res.success && Array.isArray(res.customers) && res.customers.length > 0) {
+          return res.customers.map(c => {
+            const parts = (c.name || '').split(' ');
             return {
               id: c.id,
-              storeId: c.store_id,
-              firstName,
-              lastName,
+              storeId: c.storeId || storeId,
+              firstName: parts[0] || '',
+              lastName: parts.slice(1).join(' ') || '',
               phone: c.phone || '',
               email: c.email || '',
               address: c.address || '',
               notes: c.notes || '',
-              loyaltyPoints: c.loyalty_points,
-              lifetimePoints: c.lifetime_points,
-              totalSpent: Number(c.total_spent),
-              totalOrders: c.total_orders,
-              createdAt: c.created_at,
-              updatedAt: c.updated_at
+              loyaltyPoints: c.loyaltyPoints || 0,
+              lifetimePoints: c.lifetimePoints || 0,
+              totalSpent: Number(c.totalSpent || 0),
+              totalOrders: c.totalOrders || 0,
+              createdAt: c.createdAt,
+              updatedAt: c.updatedAt
             };
           });
         }
       } catch (err: any) {
-        console.warn('[CustomerRepository] Supabase exception, using local store:', err?.message);
+        console.warn('[CustomerRepository] Native local fetch notice:', err?.message);
       }
     }
+
+    try {
+      const dbCust = await LocalDB.getAll<Customer>('customers');
+      if (dbCust && dbCust.length > 0) {
+        return dbCust;
+      }
+    } catch (_) {}
 
     return StorageService.getCustomers();
   }
 
   /**
-   * Create or save customer
+   * Local customer search (Section 40)
+   */
+  static async search(query: string, storeId: string = 'store_aura_main'): Promise<Customer[]> {
+    const q = query.trim().toLowerCase();
+    if (!q) return this.getAll(storeId);
+
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        const res = await NativeBridgeService.localDb.getCustomers(q);
+        if (res.success && Array.isArray(res.customers)) {
+          return res.customers.map(c => {
+            const parts = (c.name || '').split(' ');
+            return {
+              id: c.id,
+              storeId: c.storeId || storeId,
+              firstName: parts[0] || '',
+              lastName: parts.slice(1).join(' ') || '',
+              phone: c.phone || '',
+              email: c.email || '',
+              address: c.address || '',
+              notes: c.notes || '',
+              loyaltyPoints: c.loyaltyPoints || 0,
+              lifetimePoints: c.lifetimePoints || 0,
+              totalSpent: Number(c.totalSpent || 0),
+              totalOrders: c.totalOrders || 0,
+              createdAt: c.createdAt,
+              updatedAt: c.updatedAt
+            };
+          });
+        }
+      } catch (_) {}
+    }
+
+    const all = await this.getAll(storeId);
+    return all.filter(c =>
+      c.firstName.toLowerCase().includes(q) ||
+      c.lastName.toLowerCase().includes(q) ||
+      c.phone.toLowerCase().includes(q) ||
+      c.email.toLowerCase().includes(q)
+    );
+  }
+
+  /**
+   * Create or save customer locally first (Section 7 & 40)
    */
   static async save(customer: Customer): Promise<Customer> {
+    const custId = customer.id && customer.id.length === 36 ? customer.id : crypto.randomUUID();
+    const nowIso = new Date().toISOString();
     const fullName = `${customer.firstName} ${customer.lastName}`.trim();
 
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('customers')
-          .upsert({
-            id: customer.id.length === 36 ? customer.id : undefined,
-            store_id: customer.storeId || 'store_aura_main',
-            name: fullName,
-            phone: customer.phone || null,
-            email: customer.email || null,
-            address: customer.address || null,
-            notes: customer.notes || null,
-            loyalty_points: customer.loyaltyPoints || 0,
-            lifetime_points: customer.lifetimePoints || 0,
-            total_spent: customer.totalSpent || 0,
-            total_orders: customer.totalOrders || 0,
-            is_active: true
-          })
-          .select()
-          .single();
+    const saved: Customer = {
+      ...customer,
+      id: custId,
+      createdAt: customer.createdAt || nowIso,
+      updatedAt: nowIso
+    };
 
-        if (!error && data) {
-          customer.id = data.id;
-        }
-      } catch (e: any) {
-        console.warn('[CustomerRepository] Exception on save:', e?.message);
-      }
+    // 1. Android Native delegation if available
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        await NativeBridgeService.localDb.saveCustomer({
+          id: custId,
+          storeId: saved.storeId || 'store_aura_main',
+          name: fullName,
+          phone: saved.phone,
+          email: saved.email,
+          address: saved.address,
+          notes: saved.notes,
+          loyaltyPoints: saved.loyaltyPoints,
+          lifetimePoints: saved.lifetimePoints,
+          totalSpent: saved.totalSpent,
+          totalOrders: saved.totalOrders
+        });
+      } catch (_) {}
     }
 
+    // 2. Local persistence in LocalDB & StorageService
     const current = StorageService.getCustomers();
-    const idx = current.findIndex(c => c.id === customer.id);
+    const idx = current.findIndex(c => c.id === custId);
     if (idx !== -1) {
-      current[idx] = { ...customer, updatedAt: new Date().toISOString() };
+      current[idx] = saved;
     } else {
-      current.unshift(customer);
+      current.unshift(saved);
     }
     StorageService.saveCustomers(current);
-    await LocalDB.put('customers', customer);
+    await LocalDB.put('customers', {
+      ...saved,
+      name: fullName,
+      syncStatus: 'PENDING_UPLOAD'
+    });
 
-    return customer;
+    // 3. Enqueue sync event
+    await SyncRepository.recordEvent({
+      clientEventId: `event_cust_${custId}_${Date.now()}`,
+      storeId: saved.storeId || 'store_aura_main',
+      entityType: 'customer',
+      entityId: custId,
+      operation: idx !== -1 ? 'UPDATE' : 'INSERT',
+      payload: saved
+    });
+
+    return saved;
   }
 }

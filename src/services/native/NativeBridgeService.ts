@@ -80,6 +80,22 @@ declare global {
 
       vibrate?: (durationMs: number) => void;
       announceForAccessibility?: (text: string) => void;
+
+      // Android Local Database & Sync Engine (Phase 3)
+      localDbGetTerminalIdentity?: () => string;
+      localDbGetProducts?: (query: string, callbackId: string) => void;
+      localDbGetProductByBarcode?: (barcode: string, callbackId: string) => void;
+      localDbGetCategories?: (callbackId: string) => void;
+      localDbGetCustomers?: (query: string, callbackId: string) => void;
+      localDbSaveCustomer?: (customerJson: string, callbackId: string) => void;
+      localDbRecordSale?: (saleJson: string, callbackId: string) => void;
+      localDbGetSales?: (limit: number, offset: number, callbackId: string) => void;
+      localDbGetPendingSyncCount?: (callbackId: string) => void;
+      localDbGetSyncStatus?: (callbackId: string) => void;
+      localDbTriggerSync?: (callbackId: string) => void;
+      localDbRetrySync?: (callbackId: string) => void;
+      localDbGetSyncEvents?: (status: string, limit: number, callbackId: string) => void;
+      localDbGetLocalReports?: (dateFrom: string, dateTo: string, callbackId: string) => void;
     };
     __AuraPOSNativeCallbacks?: Record<string, (result: any) => void>;
     __AuraPOSEventBus?: {
@@ -811,6 +827,101 @@ export class NativeBridgeService {
           console.warn('Native accessibility announcement failed:', e);
         }
       }
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Phase 3: Android Native Local Database & Sync Bridge
+  // --------------------------------------------------------------------------
+  static localDb = {
+    getTerminalIdentity: (): { storeId: string; terminalId: string; deviceInstallationId: string; state: string } | null => {
+      if (!NativeBridgeService.isNativeAndroid() || !window.AndroidPOSNative?.localDbGetTerminalIdentity) {
+        return null;
+      }
+      try {
+        const raw = window.AndroidPOSNative.localDbGetTerminalIdentity();
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    },
+
+    getProducts: (query: string = ''): Promise<{ success: boolean; products: any[]; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetProducts!(query, callbackId);
+      });
+    },
+
+    getProductByBarcode: (barcode: string): Promise<{ success: boolean; product: any; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetProductByBarcode!(barcode, callbackId);
+      });
+    },
+
+    getCategories: (): Promise<{ success: boolean; categories: any[]; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetCategories!(callbackId);
+      });
+    },
+
+    getCustomers: (query: string = ''): Promise<{ success: boolean; customers: any[]; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetCustomers!(query, callbackId);
+      });
+    },
+
+    saveCustomer: (customerJson: any): Promise<{ success: boolean; customerId?: string; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbSaveCustomer!(JSON.stringify(customerJson), callbackId);
+      });
+    },
+
+    recordSaleAtomic: (sale: any): Promise<{ success: boolean; saleId?: string; receiptNumber?: string; syncStatus?: string; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbRecordSale!(JSON.stringify(sale), callbackId);
+      });
+    },
+
+    getSales: (limit: number = 50, offset: number = 0): Promise<{ success: boolean; sales: any[]; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetSales!(limit, offset, callbackId);
+      });
+    },
+
+    getPendingSyncCount: (): Promise<{ success: boolean; pendingCount: number }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetPendingSyncCount!(callbackId);
+      });
+    },
+
+    getSyncStatus: (): Promise<any> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetSyncStatus!(callbackId);
+      });
+    },
+
+    triggerSync: (): Promise<any> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbTriggerSync!(callbackId);
+      });
+    },
+
+    retrySync: (): Promise<any> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbRetrySync!(callbackId);
+      });
+    },
+
+    getSyncEvents: (status: string = 'PENDING', limit: number = 50): Promise<{ success: boolean; events: any[]; error?: string }> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetSyncEvents!(status, limit, callbackId);
+      });
+    },
+
+    getLocalReports: (dateFrom: string, dateTo: string): Promise<any> => {
+      return NativeBridgeService.callNativeAsync(callbackId => {
+        window.AndroidPOSNative!.localDbGetLocalReports!(dateFrom, dateTo, callbackId);
+      });
     }
   };
 }

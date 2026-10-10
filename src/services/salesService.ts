@@ -21,6 +21,7 @@ import { CustomerService } from './customerService.ts';
 import { PaymentService } from './paymentService.ts';
 import { PrintService } from './printer/printService.ts';
 import { PrintQueueService } from './printer/printQueueService.ts';
+import { SalesRepository } from './repositories/SalesRepository.ts';
 
 export interface ProcessSaleRequest {
   items: CartItem[];
@@ -177,18 +178,19 @@ export class SalesService {
       throw new Error(`Insufficient payment: short by $${shortfall.toFixed(2)}.`);
     }
 
-    // 4. Formulate receipt number and IDs
+    // 4. Formulate receipt number and persistent UUIDs (Section 5)
     const nowIso = new Date().toISOString();
-    const saleId = `sale_${Date.now()}`;
+    const saleId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sale_${Date.now()}`;
     const receiptNumber = `${settings.receiptPrefix}${settings.nextReceiptNumber}`;
 
-    // Update saleId on line items
+    // Update saleId and line items with consistent UUIDs
     const saleItems: SaleItem[] = calc.lineItems.map(item => ({
       ...item,
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `item_${Math.random().toString(36).substring(2, 9)}`,
       saleId
     }));
 
-    // Real browser offline status detection
+    // Real offline status detection
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
     // Build the final Sale model
@@ -211,6 +213,7 @@ export class SalesService {
       total: calc.grandTotalDollars,
       payments: req.payments.map(p => ({
         ...p,
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pay_${Math.random().toString(36).substring(2, 9)}`,
         saleId,
         status: 'completed' as const,
         createdAt: nowIso
@@ -222,8 +225,8 @@ export class SalesService {
       updatedAt: nowIso
     };
 
-    // 5. ATOMIC BUSINESS COMMIT:
-    // A. Deduct stock & log inventory movements
+    // 5. ATOMIC LOCAL DATABASE COMMIT (Sections 7, 8, 9, 10):
+    // A. Deduct stock & log inventory movements locally
     InventoryService.deductStockForSale(
       req.items,
       saleId,
@@ -245,12 +248,12 @@ export class SalesService {
     settings.nextReceiptNumber += 1;
     StorageService.saveSettings(settings);
 
-    // D. Persist sale to sales history
-    const allSales = StorageService.getSales();
-    allSales.unshift(sale);
-    StorageService.saveSales(allSales);
+    // D. Persist sale atomically via SalesRepository (writes locally first)
+    SalesRepository.recordSale(sale).catch(err => {
+      console.warn('SalesRepository local write warning:', err);
+    });
 
-    // E. Queue if offline
+    // E. Queue in offline queue if offline
     if (isOffline) {
       const queue = StorageService.getOfflineQueue();
       const queueItem: OfflineSaleQueueItem = {

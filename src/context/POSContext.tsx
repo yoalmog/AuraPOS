@@ -21,6 +21,7 @@ import { PosService } from '../services/posService.ts';
 import { SalesService } from '../services/salesService.ts';
 import { AccessibilityService } from '../services/accessibilityService.ts';
 import { Currency } from '../utils/currency.ts';
+import { SyncEngine, SyncEngineStatus } from '../services/sync/SyncEngine.ts';
 import {
   TRANSLATIONS,
   SupportedLanguage,
@@ -155,11 +156,13 @@ interface POSContextType {
   resumeOrder: (heldOrderId: string) => void;
   deleteHeldOrder: (heldOrderId: string) => void;
 
-  // Offline / Network
+  // Offline / Network & Sync Engine (Phase 3)
   isOffline: boolean;
   isSyncing: boolean;
   pendingSyncCount: number;
   triggerSync: () => void;
+  syncEngineStatus: SyncEngineStatus;
+  retryFailedSync: () => Promise<void>;
 
   // Toast notifications
   toasts: ToastMessage[];
@@ -417,45 +420,24 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [discounts, setDiscounts] = useState<Discount[]>(() => StorageService.getDiscounts());
   const [taxConfigs, setTaxConfigs] = useState<TaxConfig[]>(() => StorageService.getTaxConfigs());
 
-  // Offline & Sync (Real browser network detection)
-  const [isOffline, setIsOffline] = useState<boolean>(() => typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  // Offline & Sync Engine (Phase 3 centralized sync)
+  const [syncEngineStatus, setSyncEngineStatus] = useState<SyncEngineStatus>(() => SyncEngine.getStatus());
+  const [isOffline, setIsOffline] = useState<boolean>(() => !SyncEngine.isOnline());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => StorageService.getOfflineQueue().length);
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOffline(false);
-      showToast({ type: 'success', title: 'Network Online', message: 'Connection restored.' });
-      if (StorageService.getOfflineQueue().length > 0) {
-        setIsSyncing(true);
-        setTimeout(() => {
-          const synced = PosService.syncOfflineQueue();
-          setPendingSyncCount(0);
-          setIsSyncing(false);
-          refreshData();
-          showToast({
-            type: 'success',
-            title: 'Sync Complete',
-            message: `Uploaded ${synced} offline transaction(s).`
-          });
-        }, 800);
-      }
-    };
-    const handleOffline = () => {
-      setIsOffline(true);
-      showToast({
-        type: 'warning',
-        title: 'Network Offline',
-        message: 'Transactions will be stored locally and queued for auto-sync.'
-      });
-    };
+    SyncEngine.start();
+    const unsub = SyncEngine.subscribe(status => {
+      setSyncEngineStatus(status);
+      setIsOffline(!status.isOnline);
+      setIsSyncing(status.state === 'SYNCING');
+      setPendingSyncCount(status.pendingUploads);
+    });
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
+    SyncEngine.getPendingCount().then(cnt => setPendingSyncCount(cnt)).catch(() => {});
+
+    return () => unsub();
   }, []);
 
   // Cart
@@ -814,24 +796,61 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast({ type: 'info', title: 'Held order removed' });
   }, [showToast]);
 
-  const triggerSync = useCallback(() => {
-    if (pendingSyncCount === 0) {
-      showToast({ type: 'info', title: 'All records synced', message: 'No pending offline sales.' });
-      return;
-    }
+  const triggerSync = useCallback(async () => {
     setIsSyncing(true);
-    setTimeout(() => {
-      const synced = PosService.syncOfflineQueue();
-      setPendingSyncCount(0);
-      setIsSyncing(false);
+    try {
+      const res = await SyncEngine.syncNow();
+      const pending = await SyncEngine.getPendingCount();
+      setPendingSyncCount(pending);
       refreshData();
+      if (res.success) {
+        showToast({
+          type: 'success',
+          title: t('sync.success', 'Sync Successful'),
+          message: res.uploaded ? `Uploaded ${res.uploaded} changes.` : 'Cloud and local database synchronized.'
+        });
+      } else {
+        showToast({
+          type: 'warning',
+          title: t('sync.failed', 'Sync Incomplete'),
+          message: res.error || 'Operating offline. Changes safely saved locally.'
+        });
+      }
+    } catch (err: any) {
       showToast({
-        type: 'success',
-        title: 'Sync Successful',
-        message: `Uploaded ${synced} offline transaction(s).`
+        type: 'error',
+        title: t('sync.error', 'Sync Error'),
+        message: err?.message || 'Could not reach server.'
       });
-    }, 1200);
-  }, [pendingSyncCount, showToast, refreshData]);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [showToast, refreshData, t]);
+
+  const retryFailedSync = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const res = await SyncEngine.retryFailed();
+      const pending = await SyncEngine.getPendingCount();
+      setPendingSyncCount(pending);
+      refreshData();
+      if (res.success) {
+        showToast({
+          type: 'success',
+          title: t('sync.retrySuccess', 'Retry Successful'),
+          message: 'Failed changes synchronized.'
+        });
+      } else {
+        showToast({
+          type: 'error',
+          title: t('sync.retryFailed', 'Retry Failed'),
+          message: res.error || 'Server error on retry.'
+        });
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [showToast, refreshData, t]);
 
   // Global Keyboard Shortcuts (F1 = POS, F2 = Search, F3 = Customer, F4 = Hold, F5 = Held Orders, F6 = Discount, F7 = Checkout)
   useEffect(() => {
@@ -948,6 +967,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isSyncing,
         pendingSyncCount,
         triggerSync,
+        syncEngineStatus,
+        retryFailedSync,
         toasts,
         showToast,
         removeToast,

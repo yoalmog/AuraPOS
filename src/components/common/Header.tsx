@@ -9,6 +9,8 @@ import {
   Lock,
   Wifi,
   WifiOff,
+  RefreshCw,
+  AlertCircle,
   UserCheck,
   Check,
   ChevronDown,
@@ -40,6 +42,10 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
     activeCustomer,
     setOpenCustomerModal,
     isOffline,
+    isSyncing,
+    pendingSyncCount,
+    triggerSync,
+    syncEngineStatus,
     cartItems,
     isSidebarCollapsed,
     toggleSidebar,
@@ -286,20 +292,76 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
                 </button>
               )}
 
-              {/* Network connectivity status */}
-              <div
-                className={`flex items-center gap-1.5 min-h-[40px] px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors shrink-0 ${
-                  isOffline
+              {/* Phase 3: Real Sync Status Indicator (Section 32) */}
+              <button
+                type="button"
+                onClick={triggerSync}
+                className={`flex items-center gap-1.5 min-h-[40px] px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all shrink-0 cursor-pointer ${
+                  isSyncing
+                    ? 'bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-400'
+                    : syncEngineStatus?.state === 'SYNC_ERROR'
+                    ? 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-400'
+                    : isOffline
                     ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400'
+                    : pendingSyncCount > 0
+                    ? 'bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-400'
                     : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
                 }`}
-                title={isOffline ? 'Network Offline: Local terminal database active' : 'Network Online: Cloud sync connected'}
-                aria-label={isOffline ? 'Network status: Offline. Operating in local database mode.' : 'Network status: Online and synchronized.'}
+                title={
+                  isSyncing
+                    ? 'Synchronizing local changes with Supabase...'
+                    : syncEngineStatus?.state === 'SYNC_ERROR'
+                    ? 'Sync Error: Click to retry synchronization'
+                    : isOffline
+                    ? `Offline: ${pendingSyncCount} local changes pending upload`
+                    : pendingSyncCount > 0
+                    ? `Online: ${pendingSyncCount} changes pending sync`
+                    : 'Online: Local database fully synchronized with cloud'
+                }
+                aria-label={
+                  isSyncing
+                    ? 'Synchronizing changes'
+                    : isOffline
+                    ? `Offline, ${pendingSyncCount} pending`
+                    : 'Online and synced'
+                }
                 role="status"
               >
-                {isOffline ? <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400" /> : <Wifi className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
-                <span className="hidden lg:inline">{isOffline ? t('header.offline', 'Offline') : t('header.online', 'Online')}</span>
-              </div>
+                {isSyncing ? (
+                  <RefreshCw className="w-4 h-4 text-blue-600 dark:text-blue-400 animate-spin" />
+                ) : syncEngineStatus?.state === 'SYNC_ERROR' ? (
+                  <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                ) : isOffline ? (
+                  <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                ) : (
+                  <Wifi className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                )}
+
+                <div className="flex flex-col text-left leading-tight">
+                  <span className="hidden md:inline font-bold">
+                    {isSyncing
+                      ? 'SYNCING'
+                      : syncEngineStatus?.state === 'SYNC_ERROR'
+                      ? 'SYNC ERROR'
+                      : isOffline
+                      ? 'OFFLINE'
+                      : 'ONLINE'}
+                  </span>
+                  <span className="text-[10px] font-medium opacity-90 hidden lg:inline">
+                    {isSyncing
+                      ? `Uploading ${pendingSyncCount}...`
+                      : syncEngineStatus?.state === 'SYNC_ERROR'
+                      ? 'Action needed'
+                      : isOffline
+                      ? pendingSyncCount > 0
+                        ? `${pendingSyncCount} pending`
+                        : 'Local DB Active'
+                      : pendingSyncCount > 0
+                      ? `${pendingSyncCount} pending`
+                      : 'Synced'}
+                  </span>
+                </div>
+              </button>
 
               {/* Keyboard Shortcuts Trigger (Desktop only) */}
               <button

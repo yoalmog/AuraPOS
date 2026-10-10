@@ -1,0 +1,97 @@
+{
+  "package_name": "AuraPOS Phase 4A Cloud Foundation Consolidated Deployment",
+  "version": "1.0.0",
+  "created_at": "2026-10-09T16:08:00Z",
+  "target_project": {
+    "project_id": "zchadhvfffmmarpznyxi",
+    "project_host": "zchadhvfffmmarpznyxi.supabase.co",
+    "schema": "public"
+  },
+  "deployment_file": "supabase/deployments/phase4a_consolidated.sql",
+  "sha256": "958ee2ab2760d47cd99272d33c1d12921790dc62d19e78ec7f762b3ec9b24e7c",
+  "execution_method": "Supabase Dashboard SQL Editor (Manual Run)",
+  "source_migrations": [
+    {
+      "file": "supabase/migrations/20240523000001_core_schema.sql",
+      "status": "SUPERSEDED",
+      "notes": "Early schema stub with 7 tables; fully superseded by 20261006000001."
+    },
+    {
+      "file": "supabase/migrations/20261006000001_core_schema.sql",
+      "status": "CONSOLIDATED",
+      "notes": "Core 28 relational tables, seed roles, granular permissions, foreign keys, and indexes."
+    },
+    {
+      "file": "supabase/migrations/20261006000002_rls_and_policies.sql",
+      "status": "CONSOLIDATED_AND_HARDENED",
+      "notes": "RLS activation, store-isolation policies, and search_path-hardened security helper functions."
+    },
+    {
+      "file": "supabase/migrations/20261008000001_phase4a_cloud_foundation.sql",
+      "status": "CONSOLIDATED_AND_EXPANDED",
+      "notes": "Soft deletes (deleted_at), version columns, storage bucket 'aurapos-media', atomic RPCs, and aliases."
+    }
+  ],
+  "entities": {
+    "tables_count": 28,
+    "tables": [
+      "stores",
+      "terminals",
+      "roles",
+      "permissions",
+      "role_permissions",
+      "user_profiles",
+      "user_roles",
+      "categories",
+      "category_translations",
+      "taxes",
+      "products",
+      "product_translations",
+      "product_variants",
+      "customers",
+      "sales",
+      "sale_items",
+      "payments",
+      "refunds",
+      "inventory",
+      "inventory_movements",
+      "cash_shifts",
+      "cash_movements",
+      "printers",
+      "printer_routes",
+      "print_jobs",
+      "sync_events",
+      "sync_cursors",
+      "audit_logs",
+      "store_settings"
+    ],
+    "rpc_functions_count": 8,
+    "rpc_functions": [
+      "sync_process_sale",
+      "process_sale_atomic",
+      "record_inventory_movement_atomic",
+      "sync_process_cash_shift",
+      "open_cash_shift_atomic",
+      "close_cash_shift_atomic",
+      "sync_pull_changes",
+      "sync_backend_health"
+    ],
+    "security_helpers": [
+      "auth_user_store_id",
+      "auth_user_has_permission",
+      "auth_user_is_owner_or_admin"
+    ],
+    "storage_buckets": [
+      "aurapos-media"
+    ],
+    "rls_enabled_tables_count": 28,
+    "idempotent_policies": true
+  },
+  "validation_status": {
+    "syntax_and_dependencies": "VALIDATED",
+    "security_definer_search_paths": "HARDENED",
+    "rls_coverage": "COMPLETE",
+    "idempotency": "VERIFIED",
+    "deployment_status": "READY_FOR_OPERATOR_EXECUTION"
+  }
+}

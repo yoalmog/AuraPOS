@@ -11,11 +11,14 @@ import {
   Calendar,
   Layers,
   Award,
-  Users
+  Users,
+  Database,
+  CheckCircle2
 } from 'lucide-react';
 
 export const ReportsView: React.FC = () => {
-  const { sales, products, categories, employees, showToast } = usePOS();
+  const { sales, products, categories, employees, showToast, isOffline, pendingSyncCount } = usePOS();
+  const isLocalDataOnly = isOffline || pendingSyncCount > 0;
   const [dateRange, setDateRange] = useState<'today' | 'yesterday' | '7days' | '30days' | 'all'>('7days');
 
   // Filter sales by date range
@@ -198,7 +201,23 @@ export const ReportsView: React.FC = () => {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Business Analytics & Reports</h2>
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-xl font-bold text-slate-900 tracking-tight">Business Analytics & Reports</h2>
+              <span
+                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                  isLocalDataOnly
+                    ? 'bg-amber-50 text-amber-800 border-amber-300'
+                    : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                }`}
+              >
+                {isLocalDataOnly ? <Database className="w-3 h-3 text-amber-600" /> : <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+                <span>
+                  {isLocalDataOnly
+                    ? `LOCAL DATA ${isOffline ? '(Offline)' : `(${pendingSyncCount} unsynced)`}`
+                    : 'CLOUD DATA (Synchronized)'}
+                </span>
+              </span>
+            </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Real-time sales performance, category revenue distribution, and staff leaderboards
             </p>

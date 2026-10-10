@@ -698,6 +698,361 @@ class NativeBridge(
     }
 
     // -------------------------------------------------------------
+    // Phase 3: Android Local Room Database & Sync Engine APIs
+    // -------------------------------------------------------------
+
+    private val localRepo = com.aurapos.pos.data.LocalRepository(activity)
+    private val syncEngine = com.aurapos.pos.sync.SyncEngine.getInstance(activity)
+    private val identityManager = com.aurapos.pos.device.DeviceIdentityManager(activity)
+
+    @JavascriptInterface
+    fun localDbGetTerminalIdentity(): String {
+        return JSONObject().apply {
+            put("storeId", identityManager.getStoreId())
+            put("terminalId", identityManager.getTerminalId())
+            put("deviceInstallationId", identityManager.getDeviceInstallationId())
+            put("state", identityManager.getActivationState().name)
+        }.toString()
+    }
+
+    @JavascriptInterface
+    fun localDbGetProducts(query: String, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val list = localRepo.getProducts(if (query.isBlank()) null else query)
+                val jsonArr = JSONArray()
+                for (p in list) {
+                    jsonArr.put(JSONObject().apply {
+                        put("id", p.id)
+                        put("storeId", p.storeId)
+                        put("categoryId", p.categoryId)
+                        put("taxId", p.taxId)
+                        put("name", p.name)
+                        put("sku", p.sku ?: "")
+                        put("barcode", p.barcode ?: "")
+                        put("description", p.description ?: "")
+                        put("price", p.price)
+                        put("cost", p.cost)
+                        put("unit", p.unit)
+                        put("trackInventory", p.trackInventory)
+                        put("stock", p.stockMinimum)
+                        put("lowStockThreshold", p.stockMinimum)
+                        put("isFavorite", p.isFavorite)
+                        put("active", p.isActive)
+                        put("imageUrl", p.imageUrl)
+                        put("syncStatus", p.syncStatus)
+                        put("createdAt", p.createdAt)
+                        put("updatedAt", p.updatedAt)
+                    })
+                }
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("products", jsonArr)
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetProductByBarcode(barcode: String, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val p = localRepo.getProductByBarcode(barcode)
+                if (p != null) {
+                    val pObj = JSONObject().apply {
+                        put("id", p.id)
+                        put("storeId", p.storeId)
+                        put("categoryId", p.categoryId)
+                        put("name", p.name)
+                        put("sku", p.sku ?: "")
+                        put("barcode", p.barcode ?: "")
+                        put("price", p.price)
+                        put("cost", p.cost)
+                        put("unit", p.unit)
+                        put("trackInventory", p.trackInventory)
+                        put("stock", p.stockMinimum)
+                        put("active", p.isActive)
+                    }
+                    postCallback(callbackId, JSONObject().apply {
+                        put("success", true)
+                        put("product", pObj)
+                    }.toString())
+                } else {
+                    postCallback(callbackId, JSONObject().apply {
+                        put("success", false)
+                        put("product", JSONObject.NULL)
+                    }.toString())
+                }
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetCategories(callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val list = localRepo.getCategories()
+                val jsonArr = JSONArray()
+                for (c in list) {
+                    jsonArr.put(JSONObject().apply {
+                        put("id", c.id)
+                        put("storeId", c.storeId)
+                        put("name", c.name)
+                        put("icon", c.icon)
+                        put("imageUrl", c.imageUrl)
+                        put("color", c.color)
+                        put("sortOrder", c.sortOrder)
+                        put("printerId", c.printerId)
+                        put("autoPrintKitchen", c.autoPrintKitchen)
+                        put("active", c.isActive)
+                        put("syncStatus", c.syncStatus)
+                    })
+                }
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("categories", jsonArr)
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetCustomers(query: String, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val list = localRepo.getCustomers(if (query.isBlank()) null else query)
+                val jsonArr = JSONArray()
+                for (c in list) {
+                    jsonArr.put(JSONObject().apply {
+                        put("id", c.id)
+                        put("storeId", c.storeId)
+                        put("name", c.name)
+                        put("phone", c.phone ?: "")
+                        put("email", c.email ?: "")
+                        put("address", c.address ?: "")
+                        put("notes", c.notes ?: "")
+                        put("loyaltyPoints", c.loyaltyPoints)
+                        put("totalSpent", c.totalSpent)
+                        put("totalOrders", c.totalOrders)
+                        put("active", c.isActive)
+                        put("syncStatus", c.syncStatus)
+                    })
+                }
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("customers", jsonArr)
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbSaveCustomer(customerJsonStr: String, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val cObj = JSONObject(customerJsonStr)
+                val c = localRepo.saveCustomer(cObj)
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("customerId", c.id)
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbRecordSale(saleJsonStr: String, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val sObj = JSONObject(saleJsonStr)
+                val result = localRepo.recordSaleAtomic(sObj)
+                postCallback(callbackId, result.toString())
+            } catch (e: Exception) {
+                Log.e("NativeBridge", "Error executing atomic local sale: ${e.message}", e)
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message ?: "Failed to record sale in local database")
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetSales(limit: Int, offset: Int, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val list = localRepo.getSales(limit.coerceIn(1, 200), offset.coerceAtLeast(0))
+                val jsonArr = JSONArray()
+                for (s in list) {
+                    jsonArr.put(JSONObject().apply {
+                        put("id", s.id)
+                        put("storeId", s.storeId)
+                        put("receiptNumber", s.receiptNumber)
+                        put("customerId", s.customerId)
+                        put("cashierId", s.cashierId)
+                        put("orderType", s.orderType)
+                        put("status", s.status)
+                        put("subtotal", s.subtotal)
+                        put("discountTotal", s.discountTotal)
+                        put("taxTotal", s.taxTotal)
+                        put("total", s.total)
+                        put("currency", s.currency)
+                        put("isOffline", s.isOffline)
+                        put("syncStatus", s.syncStatus)
+                        put("createdAt", s.createdAt)
+                    })
+                }
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("sales", jsonArr)
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetPendingSyncCount(callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val count = localRepo.getPendingSyncCount()
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("pendingCount", count)
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("pendingCount", 0)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetSyncStatus(callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val status = syncEngine.getStatus()
+                val pending = localRepo.getPendingSyncCount()
+                status.put("pendingUploads", pending)
+                postCallback(callbackId, status.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("status", "ERROR")
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbTriggerSync(callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val result = syncEngine.syncNow()
+                postCallback(callbackId, result.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbRetrySync(callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val result = syncEngine.retryFailed()
+                postCallback(callbackId, result.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetSyncEvents(status: String, limit: Int, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val list = localRepo.getSyncEvents(status, limit.coerceIn(1, 100))
+                val jsonArr = JSONArray()
+                for (ev in list) {
+                    jsonArr.put(JSONObject().apply {
+                        put("id", ev.id)
+                        put("clientEventId", ev.clientEventId)
+                        put("entityType", ev.entityType)
+                        put("entityId", ev.entityId)
+                        put("operation", ev.operation)
+                        put("status", ev.status)
+                        put("attempts", ev.attempts)
+                        put("errorMessage", ev.errorMessage)
+                        put("createdAt", ev.createdAt)
+                    })
+                }
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", true)
+                    put("events", jsonArr)
+                }.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun localDbGetLocalReports(dateFrom: String, dateTo: String, callbackId: String) {
+        bridgeScope.launch {
+            try {
+                val report = localRepo.getLocalReports(dateFrom, dateTo)
+                postCallback(callbackId, report.toString())
+            } catch (e: Exception) {
+                postCallback(callbackId, JSONObject().apply {
+                    put("success", false)
+                    put("error", e.message)
+                }.toString())
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
     // Safe Helper Dispatchers to JavaScript
     // -------------------------------------------------------------
 
