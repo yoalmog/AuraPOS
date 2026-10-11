@@ -1,216 +1,316 @@
-package com.aurapos.pos.sync
+import React, { useState, useEffect } from 'react';
+import { usePOS } from '../../../context/POSContext.tsx';
+import { SyncEngine, FailedSyncEvent } from '../../../services/sync/SyncEngine.ts';
+import { NativeBridgeService } from '../../../services/native/NativeBridgeService.ts';
+import {
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  ShieldCheck,
+  RotateCcw,
+  Terminal,
+  Database,
+  Info
+} from 'lucide-react';
 
-import android.content.Context
-import android.util.Log
-import androidx.work.*
-import com.aurapos.pos.data.AppDatabase
-import com.aurapos.pos.data.entity.SyncStatus
-import kotlinx.coroutines.*
-import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.*
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
+export const SyncCenterTab: React.FC = () => {
+  const {
+    isOffline,
+    isSyncing,
+    pendingSyncCount,
+    triggerSync,
+    retryFailedSync,
+    syncEngineStatus,
+    settings,
+    isOwner,
+    t
+  } = usePOS();
 
-/**
- * AuraPOS Centralized Android Synchronization Engine
- * Conforming to Sections 12, 13, 14, 15, 16, 17, 18, 19, 21, 22:
- * - Single centralized sync orchestrator (no sync logic scattered in UI screens)
- * - Automatic sync upon network reconnect
- * - WorkManager background sync support
- * - Idempotent upload flow & dependency-ordered download flow
- */
-class SyncEngine(private val context: Context) {
+  const [failedEvents, setFailedEvents] = useState<FailedSyncEvent[]>([]);
+  const [terminalInfo, setTerminalInfo] = useState<any>(null);
+  const [isLoadingEvents, setIsLoadingEvents] = useState<boolean>(false);
 
-    private val db = AppDatabase.getInstance(context)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val isSyncing = AtomicBoolean(false)
+  useEffect(() => {
+    loadSyncData();
+  }, [syncEngineStatus, isSyncing]);
 
-    private var lastSuccessfulSync: String? = null
-    private var lastSyncAttempt: String? = null
-    private var currentStatus: String = "IDLE" // IDLE, SYNCING, OFFLINE, SYNC_ERROR
+  const loadSyncData = async () => {
+    setIsLoadingEvents(true);
+    try {
+      const failed = await SyncEngine.getFailedEvents();
+      setFailedEvents(failed);
 
-    private var networkMonitor: NetworkMonitor? = null
-
-    fun start(onStatusChange: ((JSONObject) -> Unit)? = null) {
-        Log.i(TAG, "Starting AuraPOS Centralized SyncEngine...")
-
-        // 1. Initialize Network Monitor
-        networkMonitor = NetworkMonitor(context) { state ->
-            when (state) {
-                NetworkMonitor.NetworkState.ONLINE -> {
-                    currentStatus = if (isSyncing.get()) "SYNCING" else "ONLINE"
-                    // Requirement 21: Auto-trigger sync on network recovery
-                    scope.launch { syncNow() }
-                }
-                NetworkMonitor.NetworkState.OFFLINE -> {
-                    currentStatus = "OFFLINE"
-                }
-                NetworkMonitor.NetworkState.CONNECTING -> {
-                    currentStatus = "CONNECTING"
-                }
-                NetworkMonitor.NetworkState.SYNCING -> {
-                    currentStatus = "SYNCING"
-                }
-                NetworkMonitor.NetworkState.SYNC_ERROR -> {
-                    currentStatus = "SYNC_ERROR"
-                }
-            }
-            onStatusChange?.invoke(getStatus())
-        }
-        networkMonitor?.start()
-
-        // 2. Schedule reliable WorkManager periodic sync (Requirement 22)
-        schedulePeriodicBackgroundSync()
+      if (NativeBridgeService.isNativeAndroid()) {
+        const idInfo = NativeBridgeService.localDb.getTerminalIdentity();
+        setTerminalInfo(idInfo);
+      }
+    } catch (_) {
+    } finally {
+      setIsLoadingEvents(false);
     }
+  };
 
-    fun stop() {
-        networkMonitor?.stop()
-        scope.cancel()
+  const handleManualSync = () => {
+    triggerSync();
+  };
+
+  const handleRetryFailed = async () => {
+    await retryFailedSync();
+    await loadSyncData();
+  };
+
+  const formatTimestamp = (iso: string | null) => {
+    if (!iso) return t('sync.never', 'Never');
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
     }
+  };
 
-    suspend fun getPendingCount(): Int = withContext(Dispatchers.IO) {
-        db.syncDao().getPendingCount()
-    }
+  return (
+    <div className="space-y-6">
+      {/* Header Info */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
+        <div className="flex items-center gap-3.5">
+          <div
+            className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+              isSyncing
+                ? 'bg-blue-500/10 text-blue-600'
+                : syncEngineStatus?.state === 'SYNC_ERROR'
+                ? 'bg-rose-500/10 text-rose-600'
+                : isOffline
+                ? 'bg-amber-500/10 text-amber-600'
+                : 'bg-emerald-500/10 text-emerald-600'
+            }`}
+          >
+            {isSyncing ? (
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            ) : syncEngineStatus?.state === 'SYNC_ERROR' ? (
+              <AlertTriangle className="w-6 h-6" />
+            ) : isOffline ? (
+              <WifiOff className="w-6 h-6" />
+            ) : (
+              <Wifi className="w-6 h-6" />
+            )}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-[var(--theme-text-primary)]">
+                {t('sync.centerTitle', 'Offline-First Synchronization Engine')}
+              </h3>
+              <span
+                className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                  isSyncing
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
+                    : syncEngineStatus?.state === 'SYNC_ERROR'
+                    ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300'
+                    : isOffline
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                }`}
+              >
+                {syncEngineStatus?.state || (isOffline ? 'OFFLINE' : 'ONLINE')}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--theme-text-secondary)] mt-0.5">
+              {isOffline
+                ? t('sync.offlineNotice', 'Operating offline. Local database is active and recording all transactions.')
+                : t('sync.onlineNotice', 'Connected. Automatic bidirectional sync active between local terminal & cloud.')}
+            </p>
+          </div>
+        </div>
 
-    fun getStatus(): JSONObject {
-        val now = getIsoNow()
-        val isOnline = networkMonitor?.isOnline() ?: false
-        return JSONObject().apply {
-            put("status", if (!isOnline) "OFFLINE" else if (isSyncing.get()) "SYNCING" else currentStatus)
-            put("isOnline", isOnline)
-            put("lastSuccessfulSync", lastSuccessfulSync)
-            put("lastSyncAttempt", lastSyncAttempt ?: now)
-            put("currentOperation", if (isSyncing.get()) "Synchronizing local transactions..." else "Idle")
-        }
-    }
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2.5">
+          {failedEvents.length > 0 && (
+            <button
+              onClick={handleRetryFailed}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{t('sync.retryFailed', 'Retry Failed')} ({failedEvents.length})</span>
+            </button>
+          )}
 
-    /**
-     * Executes bidirectional sync cycle:
-     * 1. Check network
-     * 2. Upload pending local events in dependency order (stores/terminals -> master data -> sales -> items -> payments -> inventory movements)
-     * 3. Download master data updates from Supabase using sync cursors
-     */
-    suspend fun syncNow(): JSONObject = withContext(Dispatchers.IO) {
-        if (!isSyncing.compareAndSet(false, true)) {
-            return@withContext JSONObject().apply {
-                put("success", false)
-                put("message", "Sync already in progress")
-            }
-        }
+          <button
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-[var(--theme-primary)] hover:opacity-90 text-white shadow-xs transition-opacity cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? t('sync.syncingBtn', 'Syncing...') : t('sync.syncNowBtn', 'Sync Now')}</span>
+          </button>
+        </div>
+      </div>
 
-        lastSyncAttempt = getIsoNow()
-        var uploadSuccessCount = 0
-        var uploadFailCount = 0
+      {/* Metrics Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Pending Uploads */}
+        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
+          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
+            <span className="text-xs font-medium">{t('sync.pendingUploads', 'Pending Uploads')}</span>
+            <ArrowUpCircle className="w-4 h-4 text-sky-500" />
+          </div>
+          <p className="text-2xl font-bold text-[var(--theme-text-primary)] mt-1.5 font-mono">
+            {pendingSyncCount}
+          </p>
+          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
+            {pendingSyncCount === 0 ? t('sync.allSaved', 'All transactions uploaded') : t('sync.queuedToUpload', 'Queued for cloud synchronization')}
+          </span>
+        </div>
 
-        try {
-            if (networkMonitor?.isOnline() == false) {
-                currentStatus = "OFFLINE"
-                return@withContext JSONObject().apply {
-                    put("success", false)
-                    put("error", "Network unavailable. Operating offline.")
-                }
-            }
+        {/* Pending Downloads */}
+        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
+          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
+            <span className="text-xs font-medium">{t('sync.pendingDownloads', 'Pending Downloads')}</span>
+            <ArrowDownCircle className="w-4 h-4 text-emerald-500" />
+          </div>
+          <p className="text-2xl font-bold text-[var(--theme-text-primary)] mt-1.5 font-mono">
+            {syncEngineStatus?.pendingDownloads || 0}
+          </p>
+          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
+            {t('sync.masterDataSync', 'Master catalog & settings')}
+          </span>
+        </div>
 
-            currentStatus = "SYNCING"
-            val pendingEvents = db.syncDao().getPendingEvents(limit = 100)
+        {/* Last Successful Sync */}
+        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
+          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
+            <span className="text-xs font-medium">{t('sync.lastSuccess', 'Last Success')}</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          </div>
+          <p className="text-xs font-bold text-[var(--theme-text-primary)] mt-2 font-mono truncate">
+            {formatTimestamp(syncEngineStatus?.lastSuccessfulSync || null)}
+          </p>
+          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
+            {t('sync.verifiedSync', 'Verified cloud confirmation')}
+          </span>
+        </div>
 
-            for (event in pendingEvents) {
-                try {
-                    // Upload event logic with idempotency key (client_event_id)
-                    // Marks event processed upon completion
-                    db.syncDao().updateEventStatus(
-                        id = event.id,
-                        status = "PROCESSED",
-                        errorMessage = null,
-                        processedAt = getIsoNow()
-                    )
+        {/* Last Attempt */}
+        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
+          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
+            <span className="text-xs font-medium">{t('sync.lastAttempt', 'Last Attempt')}</span>
+            <Clock className="w-4 h-4 text-amber-500" />
+          </div>
+          <p className="text-xs font-bold text-[var(--theme-text-primary)] mt-2 font-mono truncate">
+            {formatTimestamp(syncEngineStatus?.lastSyncAttempt || null)}
+          </p>
+          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
+            {syncEngineStatus?.currentOperation || 'Idle'}
+          </span>
+        </div>
+      </div>
 
-                    if (event.entityType == "sale") {
-                        db.saleDao().updateSyncStatus(
-                            id = event.entityId,
-                            status = SyncStatus.SYNCED,
-                            syncedAt = getIsoNow()
-                        )
-                    }
-                    uploadSuccessCount++
-                } catch (e: Exception) {
-                    uploadFailCount++
-                    val attempts = event.attempts + 1
-                    val newStatus = if (attempts >= 5) "FAILED" else "PENDING"
-                    db.syncDao().updateEventStatus(
-                        id = event.id,
-                        status = newStatus,
-                        errorMessage = e.message,
-                        processedAt = null
-                    )
-                }
-            }
+      {/* Terminal Identification & Isolation (Sections 26 & 27) */}
+      <div className="p-4 rounded-2xl theme-surface border border-[var(--theme-border)] space-y-3">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--theme-text-secondary)]">
+          <Terminal className="w-4 h-4" />
+          <span>{t('sync.terminalIdentity', 'Terminal Identification & Isolation (Keystore Protected)')}</span>
+        </div>
 
-            lastSuccessfulSync = getIsoNow()
-            currentStatus = if (uploadFailCount > 0) "SYNC_ERROR" else "ONLINE"
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+          <div className="p-3 rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
+            <span className="text-[10px] text-[var(--theme-text-secondary)] uppercase block font-sans font-bold">
+              {t('sync.storeId', 'Store ID')}
+            </span>
+            <span className="font-bold text-[var(--theme-text-primary)] truncate block mt-0.5">
+              {terminalInfo?.storeId || settings.id || 'store_aura_main'}
+            </span>
+          </div>
 
-            return@withContext JSONObject().apply {
-                put("success", uploadFailCount == 0)
-                put("uploaded", uploadSuccessCount)
-                put("failed", uploadFailCount)
-                put("timestamp", lastSuccessfulSync)
-            }
-        } catch (e: Exception) {
-            currentStatus = "SYNC_ERROR"
-            Log.e(TAG, "Sync cycle failed: ${e.message}", e)
-            return@withContext JSONObject().apply {
-                put("success", false)
-                put("error", e.message)
-            }
-        } finally {
-            isSyncing.set(false)
-        }
-    }
+          <div className="p-3 rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
+            <span className="text-[10px] text-[var(--theme-text-secondary)] uppercase block font-sans font-bold">
+              {t('sync.terminalId', 'Persistent Terminal ID')}
+            </span>
+            <span className="font-bold text-[var(--theme-text-primary)] truncate block mt-0.5">
+              {terminalInfo?.terminalId || 'term_aura_pos_01'}
+            </span>
+          </div>
 
-    suspend fun retryFailed(): JSONObject = withContext(Dispatchers.IO) {
-        val failedEvents = db.syncDao().getEventsByStatus("FAILED", 100)
-        for (ev in failedEvents) {
-            db.syncDao().updateEventStatus(ev.id, "PENDING", null, null)
-        }
-        syncNow()
-    }
+          <div className="p-3 rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
+            <span className="text-[10px] text-[var(--theme-text-secondary)] uppercase block font-sans font-bold">
+              {t('sync.databaseEngine', 'Local Database Engine')}
+            </span>
+            <span className="font-bold text-emerald-600 truncate block mt-0.5">
+              {NativeBridgeService.isNativeAndroid() ? 'Android Room + SQLite (v2)' : 'IndexedDB (Offline Engine v4)'}
+            </span>
+          </div>
+        </div>
+      </div>
 
-    private fun schedulePeriodicBackgroundSync() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
+      {/* Failed Sync Events (For Administrators - Section 33) */}
+      <div className="p-4 rounded-2xl theme-surface border border-[var(--theme-border)] space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            <h4 className="text-sm font-bold text-[var(--theme-text-primary)]">
+              {t('sync.failedEventsTitle', 'Failed Sync Events (Administrator Inspection)')}
+            </h4>
+          </div>
+          <span className="text-xs text-[var(--theme-text-secondary)]">
+            {failedEvents.length} {t('sync.issuesReported', 'issue(s)')}
+          </span>
+        </div>
 
-        val syncWork = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-            .build()
-
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            "AuraPOS_SyncWorker",
-            ExistingPeriodicWorkPolicy.KEEP,
-            syncWork
-        )
-    }
-
-    private fun getIsoNow(): String {
-        return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-        }.format(Date())
-    }
-
-    companion object {
-        private const val TAG = "SyncEngine"
-
-        @Volatile
-        private var INSTANCE: SyncEngine? = null
-
-        fun getInstance(context: Context): SyncEngine {
-            return INSTANCE ?: synchronized(this) {
-                val instance = SyncEngine(context.applicationContext)
-                INSTANCE = instance
-                instance
-            }
-        }
-    }
-}
+        {failedEvents.length === 0 ? (
+          <div className="p-6 text-center rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
+            <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+            <p className="text-xs font-bold text-[var(--theme-text-primary)]">
+              {t('sync.noFailedEvents', 'Zero Failed Synchronization Events')}
+            </p>
+            <p className="text-[11px] text-[var(--theme-text-secondary)] mt-0.5">
+              {t('sync.cleanPipeline', 'All transactional and catalog events are processed or queued safely.')}
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-[var(--theme-text-secondary)]">
+              <thead className="bg-[var(--theme-surface-variant)] border-b border-[var(--theme-border)] text-[var(--theme-text-primary)] font-bold uppercase text-[10px]">
+                <tr>
+                  <th className="py-2.5 px-3">Client Event ID</th>
+                  <th className="py-2.5 px-3">Entity Type</th>
+                  <th className="py-2.5 px-3">Operation</th>
+                  <th className="py-2.5 px-3">Attempts</th>
+                  <th className="py-2.5 px-3">Error Cause</th>
+                  <th className="py-2.5 px-3 text-right">Timestamp</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--theme-border)]">
+                {failedEvents.map(ev => (
+                  <tr key={ev.id} className="hover:bg-[var(--theme-surface-variant)] transition-colors">
+                    <td className="py-2 px-3 font-mono text-[11px] text-[var(--theme-text-primary)]">
+                      {ev.clientEventId}
+                    </td>
+                    <td className="py-2 px-3 uppercase text-[10px] font-bold">
+                      {ev.entityType}
+                    </td>
+                    <td className="py-2 px-3 uppercase font-semibold">
+                      {ev.operation}
+                    </td>
+                    <td className="py-2 px-3 font-mono">
+                      {ev.attempts}
+                    </td>
+                    <td className="py-2 px-3 text-rose-600 max-w-xs truncate">
+                      {ev.errorMessage || 'Server unreachable'}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono text-[11px]">
+                      {new Date(ev.createdAt).toLocaleTimeString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
