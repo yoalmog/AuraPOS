@@ -178,20 +178,39 @@ export async function runRealIsolatedIntegrationTests(): Promise<IsolatedIntegra
     await client.query('BEGIN');
 
     // Create test stores
+    // Match the canonical stores schema; it has no `code` column.
     await client.query(`
-      INSERT INTO public.stores (id, name, code, is_active, created_at, updated_at)
+      INSERT INTO public.stores (id, name, is_active, created_at, updated_at)
       VALUES
-        ($1, 'Test Store Alpha', 'TEST-A', true, NOW(), NOW()),
-        ($2, 'Test Store Beta', 'TEST-B', true, NOW(), NOW())
+        ($1, 'Test Store Alpha', true, NOW(), NOW()),
+        ($2, 'Test Store Beta', true, NOW(), NOW())
       ON CONFLICT (id) DO NOTHING;
     `, [storeAId, storeBId]);
 
-    // Create auth users in auth.users schema if schema exists, or insert user_profiles
+    // user_profiles.id references auth.users(id), so seed auth identities first.
     await client.query(`
-      INSERT INTO public.user_profiles (id, store_id, email, full_name, role, is_active, created_at, updated_at)
+      INSERT INTO auth.users (
+        id, instance_id, aud, role, email, encrypted_password,
+        email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+        created_at, updated_at, is_sso_user, is_anonymous
+      )
       VALUES
-        ($1, $2, 'cashier-a@aurapos.internal', 'Cashier Alpha', 'cashier', true, NOW(), NOW()),
-        ($3, $4, 'cashier-b@aurapos.internal', 'Cashier Beta', 'cashier', true, NOW(), NOW())
+        ($1, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+         'cashier-a@aurapos.internal', '', NOW(),
+         '{"provider":"email","providers":["email"]}'::jsonb, '{"display_name":"Cashier Alpha"}'::jsonb,
+         NOW(), NOW(), false, false),
+        ($2, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+         'cashier-b@aurapos.internal', '', NOW(),
+         '{"provider":"email","providers":["email"]}'::jsonb, '{"display_name":"Cashier Beta"}'::jsonb,
+         NOW(), NOW(), false, false)
+      ON CONFLICT (id) DO NOTHING;
+    `, [userAId, userBId]);
+
+    await client.query(`
+      INSERT INTO public.user_profiles (id, store_id, display_name, is_active, created_at, updated_at)
+      VALUES
+        ($1, $2, 'Cashier Alpha', true, NOW(), NOW()),
+        ($3, $4, 'Cashier Beta', true, NOW(), NOW())
       ON CONFLICT (id) DO UPDATE SET store_id = EXCLUDED.store_id;
     `, [userAId, storeAId, userBId, storeBId]);
 
