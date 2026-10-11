@@ -383,28 +383,74 @@ export async function runMigrationSmokeCheck(
     }
   }
 
-  // Check RPCs
+   // Check RPCs
+  //
+  // IMPORTANT:
+  // A RPC returning an error does NOT mean it is missing.
+  // Supabase returns validation/auth/business errors for existing functions.
+  // Only PGRST202 means the RPC does not exist.
+
   for (const rpc of expectedRpcs) {
     try {
-      const res = await fetch(`${supabaseUrl}/rest/v1/rpc/${rpc}`, {
-        method: 'POST',
-        headers: {
-          apikey: supabaseAnonKey,
-          Authorization: `Bearer ${supabaseAnonKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({})
-      });
-      if (res.status !== 404) {
-        verifiedRpcs.push(rpc);
-      } else {
-        const text = await res.text();
-        if (text.includes('PGRST202')) {
-          missingRpcs.push(rpc);
-        } else {
-          verifiedRpcs.push(rpc);
-        }
+      let payload: Record<string, unknown> = {};
+
+      switch (rpc) {
+        case 'process_sale_atomic':
+          payload = {
+            p_sale: {},
+            p_items: [],
+            p_payments: [],
+            p_movements: [],
+            p_client_event_id: 'aurapos-smoke-test'
+          };
+          break;
+
+        case 'record_inventory_movement_atomic':
+          payload = {
+            p_movement: {}
+          };
+          break;
+
+        case 'open_cash_shift_atomic':
+        case 'close_cash_shift_atomic':
+          payload = {
+            p_shift: {}
+          };
+          break;
       }
+
+      const res = await fetch(
+        `${supabaseUrl}/rest/v1/rpc/${rpc}`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      const text = await res.text();
+
+      // Function truly missing from PostgREST
+      if (
+        res.status === 404 &&
+        text.includes('PGRST202')
+      ) {
+        missingRpcs.push(rpc);
+      } else {
+        // Existing RPC:
+        // 200 OK
+        // 400 validation error
+        // 401 auth error
+        // 403 permission error
+        // 409 constraint/business error
+        // all prove the function exists.
+        verifiedRpcs.push(rpc);
+      }
+
     } catch {
       missingRpcs.push(rpc);
     }
