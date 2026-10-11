@@ -14,11 +14,13 @@
     "db:list": "supabase migration list",
     "db:preflight": "tsx src/services/migration/productionPreflight.ts",
     "db:push": "supabase db push",
-    "test": "tsx src/tests/phase4aCloudFoundation.test.ts && tsx src/tests/securityAndMigrationGuards.test.ts && tsx src/tests/comprehensiveGuardFixtures.test.ts && tsx src/tests/realDatabaseIntegration.test.ts",
+    "test": "tsx src/tests/phase4aCloudFoundation.test.ts && tsx src/tests/securityAndMigrationGuards.test.ts && tsx src/tests/comprehensiveGuardFixtures.test.ts && tsx src/tests/realDatabaseIntegration.test.ts && tsx src/tests/workflowDefectsVerification.test.ts",
+    "test:workflow": "tsx src/tests/workflowDefectsVerification.test.ts",
     "test:db-integration": "tsx src/tests/realDatabaseIntegration.test.ts",
     "test:security": "tsx src/tests/securityAndMigrationGuards.test.ts",
     "test:fixtures": "tsx src/tests/comprehensiveGuardFixtures.test.ts",
-    "test:real-supabase": "tsx src/tests/realSupabaseIntegration.test.ts"
+    "test:real-supabase": "tsx src/tests/realSupabaseIntegration.test.ts",
+    "test:isolated-ci": "tsx src/tests/realIsolatedIntegration.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -29,6 +31,7 @@
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pg": "^8.23.1",
     "qrcode": "^1.5.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
@@ -38,6 +41,7 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

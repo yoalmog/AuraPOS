@@ -857,9 +857,10 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
 
--- Revoke function execution privileges from PUBLIC and anon
+-- Revoke function execution privileges from PUBLIC, anon, and authenticated
 REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM authenticated;
 
 -- Grant execution of individually reviewed procedures strictly to authenticated POS staff
 GRANT EXECUTE ON FUNCTION public.sync_process_sale(JSONB, JSONB, JSONB, JSONB, TEXT) TO authenticated;

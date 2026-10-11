@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      - master
     paths:
       - 'supabase/**'
       - 'src/**'
@@ -13,14 +12,13 @@ on:
   push:
     branches:
       - main
-      - master
     paths:
       - 'supabase/migrations/**'
       - 'supabase/config.toml'
   workflow_dispatch:
     inputs:
       action:
-        description: 'Workflow execution mode (default is validation only)'
+        description: 'Workflow execution mode (default is validate_only)'
         required: true
         type: choice
         options:
@@ -45,7 +43,7 @@ concurrency:
 
 jobs:
   lint-and-validate:
-    name: Lint & Pre-Deployment Validation
+    name: Lint & Local Pre-Deployment Validation (Secret-Free)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -111,10 +109,16 @@ jobs:
           echo "All SECURITY DEFINER search_paths are hardened."
 
   preflight-audit:
-    name: Pre-Flight Remote Migration Audit & Dry-Run
+    name: Pre-Flight Remote Migration Audit & Dry-Run (Protected Remote Path)
     needs: lint-and-validate
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.action == 'preflight_audit' || inputs.action == 'deploy_single_migration')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment:
+      name: production
+      url: https://supabase.com/dashboard/project/${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
     outputs:
       has_pending: ${{ steps.analyze_status.outputs.has_pending }}
       next_migration_file: ${{ steps.analyze_status.outputs.next_migration_file }}
@@ -148,17 +152,33 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
         run: |
           echo "=== Supabase Pre-Flight Remote Verification ==="
-          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
-
           if [ -z "$SUPABASE_DB_URL" ] && { [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_DB_PASSWORD" ]; }; then
-            echo "::warning::Administrative database credentials (SUPABASE_DB_URL or SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD) not configured in GitHub Secrets."
-            echo "::warning::Remote preflight dry-run skipped. Running in local validation mode."
-            echo "REMOTE_AVAILABLE=false" >> $GITHUB_ENV
-            exit 0
+            echo "::error::Administrative database credentials (SUPABASE_DB_URL or SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD) not configured in GitHub Secrets for production environment."
+            exit 1
           fi
-          echo "REMOTE_AVAILABLE=true" >> $GITHUB_ENV
+
+          # Fail-closed target database identity verification
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            echo "Verifying target database project identity for SUPABASE_DB_URL..."
+            npx tsx src/services/migration/migrationGuardCli.ts verify-db-url "$SUPABASE_DB_URL" "$SUPABASE_PROJECT_ID"
+            VERIFY_EXIT=$?
+            if [ $VERIFY_EXIT -ne 0 ]; then
+              echo "::error::Preflight aborted: Database URL does not resolve to target project $SUPABASE_PROJECT_ID!"
+              exit 1
+            fi
+          fi
+
+          # Migration file integrity verification
+          echo "Verifying local migration file integrity (SHA-256 assertions)..."
+          npx tsx src/services/migration/migrationGuardCli.ts verify-migration-integrity "supabase/migrations"
+          INTEGRITY_EXIT=$?
+          if [ $INTEGRITY_EXIT -ne 0 ]; then
+            echo "::error::Preflight aborted: Migration file integrity violation!"
+            exit 1
+          fi
 
           if [ -n "$SUPABASE_DB_URL" ]; then
             echo "Querying remote migrations via SUPABASE_DB_URL..."
@@ -168,8 +188,8 @@ jobs:
             supabase db push --db-url "$SUPABASE_DB_URL" --dry-run > /tmp/push_dry_run.txt 2>&1
             PUSH_EXIT=$?
           else
-            echo "Linking project $PROJECT_ID..."
-            supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+            echo "Linking project $SUPABASE_PROJECT_ID..."
+            supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
             echo "Querying remote migrations for linked project..."
             supabase migration list > /tmp/migration_list.txt 2>&1
             LIST_EXIT=$?
@@ -184,6 +204,12 @@ jobs:
             exit 1
           fi
 
+          if [ $PUSH_EXIT -ne 0 ]; then
+            echo "::error::Dry-run failed during preflight audit!"
+            cat /tmp/push_dry_run.txt
+            exit 1
+          fi
+
           echo "=== Remote Migration List ==="
           cat /tmp/migration_list.txt
 
@@ -192,6 +218,8 @@ jobs:
 
       - name: Determine Next Pending Migration
         id: analyze_status
+        env:
+          INPUT_TARGET_MIGRATION: ${{ inputs.target_migration }}
         run: |
           echo "=== Analyzing Migration History & Determining Target ==="
           LOCAL_FILES=($(ls -1 supabase/migrations/*.sql | sort))
@@ -204,6 +232,9 @@ jobs:
           LEDGER_ARG=""
           if [ -f /tmp/migration_list.txt ]; then
             LEDGER_ARG="/tmp/migration_list.txt"
+          else
+            echo "::error::Ledger file /tmp/migration_list.txt was not generated!"
+            exit 1
           fi
 
           ANALYSIS_JSON=$(npx tsx src/services/migration/migrationGuardCli.ts find-earliest-pending "$LEDGER_ARG" "supabase/migrations")
@@ -218,18 +249,22 @@ jobs:
           NEXT_MIGRATION_TS="$EARLIEST_TS"
 
           # Validate requested target if provided
-          REQ_TARGET="${{ inputs.target_migration }}"
-          if [ -n "$REQ_TARGET" ]; then
-            if [ ! -f "supabase/migrations/$REQ_TARGET" ]; then
-              echo "::error::Specified target migration '$REQ_TARGET' does not exist in supabase/migrations/!"
+          if [ -n "$INPUT_TARGET_MIGRATION" ]; then
+            # Strict regex validation on target filename
+            if ! [[ "$INPUT_TARGET_MIGRATION" =~ ^[0-9]{14}_[a-zA-Z0-9_-]+\.sql$ ]]; then
+              echo "::error::Invalid target migration filename format: '$INPUT_TARGET_MIGRATION'"
               exit 1
             fi
-            REQ_TS=$(echo "$REQ_TARGET" | cut -d'_' -f1)
+            if [ ! -f "supabase/migrations/$INPUT_TARGET_MIGRATION" ]; then
+              echo "::error::Specified target migration '$INPUT_TARGET_MIGRATION' does not exist in supabase/migrations/!"
+              exit 1
+            fi
+            REQ_TS=$(echo "$INPUT_TARGET_MIGRATION" | cut -d'_' -f1)
             if [ -n "$NEXT_MIGRATION_TS" ] && [ "$REQ_TS" != "$NEXT_MIGRATION_TS" ]; then
-              echo "::error::SAFETY VIOLATION: Target migration '$REQ_TARGET' ($REQ_TS) is NOT the earliest pending migration ($NEXT_MIGRATION_FILE: $NEXT_MIGRATION_TS). Out-of-order execution blocked!"
+              echo "::error::SAFETY VIOLATION: Target migration '$INPUT_TARGET_MIGRATION' ($REQ_TS) is NOT the earliest pending migration ($NEXT_MIGRATION_FILE: $NEXT_MIGRATION_TS). Out-of-order execution blocked!"
               exit 1
             fi
-            NEXT_MIGRATION_FILE="$REQ_TARGET"
+            NEXT_MIGRATION_FILE="$INPUT_TARGET_MIGRATION"
             NEXT_MIGRATION_TS="$REQ_TS"
           fi
 
@@ -244,12 +279,16 @@ jobs:
 
       - name: Publish Pre-Flight Step Summary
         if: always()
+        env:
+          INPUT_ACTION: ${{ inputs.action || 'validate_only' }}
+          PENDING_COUNT: ${{ steps.analyze_status.outputs.pending_count }}
+          TARGET_FILE: ${{ steps.analyze_status.outputs.next_migration_file }}
         run: |
           echo "### 🔍 Supabase Pre-Flight Audit Report" >> $GITHUB_STEP_SUMMARY
           echo "- **Trigger Event:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Execution Mode:** \`${{ inputs.action || 'validate_only' }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Pending Migrations Queued:** \`${{ steps.analyze_status.outputs.pending_count }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Earliest Pending Migration Target:** \`${{ steps.analyze_status.outputs.next_migration_file }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Execution Mode:** \`$INPUT_ACTION\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pending Migrations Queued:** \`$PENDING_COUNT\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Earliest Pending Migration Target:** \`$TARGET_FILE\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "> 🛡️ **Safety Policy:** Migrations are restricted to sequential, one-at-a-time execution. Default runs perform validation only without mutating the database." >> $GITHUB_STEP_SUMMARY
 
@@ -258,13 +297,14 @@ jobs:
     needs: [lint-and-validate, preflight-audit]
     if: >
       github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
       inputs.action == 'deploy_single_migration' &&
       inputs.confirm_production_deploy == true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
       name: production
-      url: https://supabase.com/dashboard/project/${{ secrets.SUPABASE_PROJECT_ID }}
+      url: https://supabase.com/dashboard/project/${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
 
     steps:
       - name: Checkout Code
@@ -287,13 +327,43 @@ jobs:
           version: 2.120.0
 
       - name: Validate Production Secrets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
           echo "=== Verifying Administrative Deployment Credentials ==="
-          if [ -z "${{ secrets.SUPABASE_DB_URL }}" ] && { [ -z "${{ secrets.SUPABASE_ACCESS_TOKEN }}" ] || [ -z "${{ secrets.SUPABASE_DB_PASSWORD }}" ]; }; then
+          if [ -z "$SUPABASE_DB_URL" ] && { [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_DB_PASSWORD" ]; }; then
             echo "::error::CRITICAL: Administrative database credentials missing in GitHub Secrets. Deployment blocked."
             exit 1
           fi
           echo "Administrative credentials confirmed."
+
+      - name: Verify Target Database Identity (Fail-Closed)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
+        run: |
+          echo "=== Verifying Target Database Project Identity Before Mutation ==="
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            npx tsx src/services/migration/migrationGuardCli.ts verify-db-url "$SUPABASE_DB_URL" "$SUPABASE_PROJECT_ID"
+            VERIFY_EXIT=$?
+            if [ $VERIFY_EXIT -ne 0 ]; then
+              echo "::error::CRITICAL: Target database URL does not resolve to target project $SUPABASE_PROJECT_ID! Mutation blocked."
+              exit 1
+            fi
+          fi
+          echo "Database identity confirmed for target project $SUPABASE_PROJECT_ID."
+
+      - name: Verify Migration File Integrity (Pre-Staging Hash Assertion)
+        run: |
+          echo "=== Asserting Migration File Integrity Before Staging ==="
+          npx tsx src/services/migration/migrationGuardCli.ts verify-migration-integrity "supabase/migrations"
+          INTEGRITY_EXIT=$?
+          if [ $INTEGRITY_EXIT -ne 0 ]; then
+            echo "::error::CRITICAL: Pre-deployment migration integrity violation detected! Deployment halted."
+            exit 1
+          fi
 
       - name: Verify Earliest Remote Pending Migration
         id: verify_earliest
@@ -301,41 +371,53 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
+          INPUT_TARGET: ${{ inputs.target_migration }}
+          PREFLIGHT_TARGET: ${{ needs.preflight-audit.outputs.next_migration_file }}
         run: |
           echo "=== Auditing Remote Ledger Before Applying Migration ==="
-          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
-
           if [ -n "$SUPABASE_DB_URL" ]; then
-            supabase migration list --db-url "$SUPABASE_DB_URL" > /tmp/deploy_migration_list.txt 2>&1
+            supabase migration list --db-url "$SUPABASE_DB_URL" > /tmp/deploy_migration_list_before.txt 2>&1
             LIST_EXIT=$?
           else
-            supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
-            supabase migration list > /tmp/deploy_migration_list.txt 2>&1
+            supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+            supabase migration list > /tmp/deploy_migration_list_before.txt 2>&1
             LIST_EXIT=$?
           fi
 
           if [ $LIST_EXIT -ne 0 ]; then
             echo "::error::Remote migration history is unavailable or ambiguous. Aborting deployment!"
-            cat /tmp/deploy_migration_list.txt
+            cat /tmp/deploy_migration_list_before.txt
             exit 1
           fi
 
-          cat /tmp/deploy_migration_list.txt
+          cat /tmp/deploy_migration_list_before.txt
 
-          TARGET_FILE="${{ inputs.target_migration || needs.preflight-audit.outputs.next_migration_file }}"
-          if [ -z "$TARGET_FILE" ] || [ ! -f "supabase/migrations/$TARGET_FILE" ]; then
+          TARGET_FILE="$INPUT_TARGET"
+          if [ -z "$TARGET_FILE" ]; then
+            TARGET_FILE="$PREFLIGHT_TARGET"
+          fi
+
+          if [ -z "$TARGET_FILE" ]; then
+            echo "::error::No target migration specified or discovered from preflight!"
+            exit 1
+          fi
+
+          # Strict filename validation
+          if ! [[ "$TARGET_FILE" =~ ^[0-9]{14}_[a-zA-Z0-9_-]+\.sql$ ]]; then
+            echo "::error::Target migration filename '$TARGET_FILE' does not match required format!"
+            exit 1
+          fi
+
+          if [ ! -f "supabase/migrations/$TARGET_FILE" ]; then
             echo "::error::Target migration '$TARGET_FILE' does not exist in repository!"
             exit 1
           fi
 
           TARGET_TS=$(echo "$TARGET_FILE" | cut -d'_' -f1)
-          if ! [[ "$TARGET_TS" =~ ^[0-9]{14}$ ]]; then
-            echo "::error::Target migration timestamp '$TARGET_TS' is not a valid 14-digit format!"
-            exit 1
-          fi
 
           # Use TypeScript guard service CLI to strictly determine earliest pending migration
-          ANALYSIS_JSON=$(npx tsx src/services/migration/migrationGuardCli.ts find-earliest-pending "/tmp/deploy_migration_list.txt" "supabase/migrations")
+          ANALYSIS_JSON=$(npx tsx src/services/migration/migrationGuardCli.ts find-earliest-pending "/tmp/deploy_migration_list_before.txt" "supabase/migrations")
           echo "Deploy Ledger Analysis: $ANALYSIS_JSON"
 
           HAS_PENDING=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.hasPending);" "$ANALYSIS_JSON")
@@ -352,14 +434,16 @@ jobs:
           fi
 
           echo "Confirmed: '$TARGET_FILE' is strictly the earliest pending migration."
+          echo "target_file=$TARGET_FILE" >> $GITHUB_OUTPUT
+          echo "target_ts=$TARGET_TS" >> $GITHUB_OUTPUT
 
       - name: Stage Isolated Single Migration (Zero Mod to Original Directory)
         id: stage_worktree
+        env:
+          TARGET_FILE: ${{ steps.verify_earliest.outputs.target_file }}
+          TARGET_TS: ${{ steps.verify_earliest.outputs.target_ts }}
         run: |
           echo "=== Staging Isolated Single Migration Environment ==="
-          TARGET_FILE="${{ inputs.target_migration || needs.preflight-audit.outputs.next_migration_file }}"
-          TARGET_TS=$(echo "$TARGET_FILE" | cut -d'_' -f1)
-
           if ! [[ "$TARGET_TS" =~ ^[0-9]{14}$ ]]; then
             echo "::error::Invalid target timestamp: '$TARGET_TS' (must be 14 digits)"
             exit 1
@@ -390,30 +474,66 @@ jobs:
           ls -la "$STAGING_DIR/supabase/migrations/"
 
           # Run automated staging validator to PROVE exactly one unapplied migration is visible
-          npx tsx src/services/migration/migrationGuardCli.ts validate-staging "$STAGING_DIR" "$TARGET_FILE" "/tmp/deploy_migration_list.txt"
+          npx tsx src/services/migration/migrationGuardCli.ts validate-staging "$STAGING_DIR" "$TARGET_FILE" "/tmp/deploy_migration_list_before.txt"
 
           echo "staging_dir=$STAGING_DIR" >> $GITHUB_OUTPUT
           echo "target_file=$TARGET_FILE" >> $GITHUB_OUTPUT
           echo "target_ts=$TARGET_TS" >> $GITHUB_OUTPUT
 
-      - name: Apply Approved Single Migration via Official CLI (Isolated Staging)
+      - name: Perform and Inspect Migration Dry-Run Output
+        id: dry_run_inspection
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
+          STAGING_DIR: ${{ steps.stage_worktree.outputs.staging_dir }}
+          TARGET_FILE: ${{ steps.stage_worktree.outputs.target_file }}
+          TARGET_TS: ${{ steps.stage_worktree.outputs.target_ts }}
+        run: |
+          echo "=== Executing and Inspecting Migration Dry-Run ==="
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            supabase db push --dry-run --workdir "$STAGING_DIR" --db-url "$SUPABASE_DB_URL" > /tmp/dry_run_output.txt 2>&1
+            DRY_RUN_EXIT=$?
+          else
+            supabase link --workdir "$STAGING_DIR" --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+            supabase db push --dry-run --workdir "$STAGING_DIR" --password "$SUPABASE_DB_PASSWORD" > /tmp/dry_run_output.txt 2>&1
+            DRY_RUN_EXIT=$?
+          fi
+
+          if [ $DRY_RUN_EXIT -ne 0 ]; then
+            echo "::error::Migration dry-run failed with exit code $DRY_RUN_EXIT! Aborting before database mutation."
+            cat /tmp/dry_run_output.txt
+            exit 1
+          fi
+
+          echo "Dry-run output inspected:"
+          cat /tmp/dry_run_output.txt
+
+          # Prove target migration is present in planned actions
+          if ! grep -q "$TARGET_FILE" /tmp/dry_run_output.txt && ! grep -q "$TARGET_TS" /tmp/dry_run_output.txt && ! grep -q "migration" /tmp/dry_run_output.txt; then
+            echo "::error::SAFETY VIOLATION: Dry-run output did not confirm target migration $TARGET_FILE ($TARGET_TS)!"
+            exit 1
+          fi
+          echo "Dry-run inspection confirmed approved target migration."
+
+      - name: Apply Approved Single Migration via Official CLI (Isolated Staging)
+        id: apply_migration
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
+          STAGING_DIR: ${{ steps.stage_worktree.outputs.staging_dir }}
+          TARGET_FILE: ${{ steps.stage_worktree.outputs.target_file }}
         run: |
           echo "=== Applying Single Migration via Supabase CLI from Staging Directory ==="
-          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
-          STAGING_DIR="${{ steps.stage_worktree.outputs.staging_dir }}"
-          TARGET_FILE="${{ steps.stage_worktree.outputs.target_file }}"
-
           echo "Applying approved migration: $TARGET_FILE using isolated workdir $STAGING_DIR"
 
           if [ -n "$SUPABASE_DB_URL" ]; then
             supabase db push --workdir "$STAGING_DIR" --db-url "$SUPABASE_DB_URL"
             APPLY_EXIT=$?
           else
-            supabase link --workdir "$STAGING_DIR" --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
             supabase db push --workdir "$STAGING_DIR" --password "$SUPABASE_DB_PASSWORD"
             APPLY_EXIT=$?
           fi
@@ -434,50 +554,107 @@ jobs:
           echo "Original repository migrations verified:"
           ls -1 supabase/migrations/
 
-      - name: Post-Migration Remote Status Verification
+      - name: Verify Migration File Integrity (Post-Deploy Hash Assertion)
+        if: always()
+        run: |
+          echo "=== Asserting Migration File Integrity After Staging & Push ==="
+          npx tsx src/services/migration/migrationGuardCli.ts verify-migration-integrity "supabase/migrations"
+          INTEGRITY_EXIT=$?
+          if [ $INTEGRITY_EXIT -ne 0 ]; then
+            echo "::error::CRITICAL: Post-deployment migration file integrity violation detected!"
+            exit 1
+          fi
+
+      - name: Post-Migration Remote Status Verification & Transition Assertion
+        id: verify_transition
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
+          TARGET_FILE: ${{ steps.stage_worktree.outputs.target_file }}
         run: |
-          echo "=== Verifying Remote Migration History ==="
-          PROJECT_ID="${{ secrets.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}"
-
+          echo "=== Verifying Remote Migration History and Transition Assertions ==="
           if [ -n "$SUPABASE_DB_URL" ]; then
-            supabase migration list --db-url "$SUPABASE_DB_URL"
-          elif [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
-            supabase migration list
+            supabase migration list --db-url "$SUPABASE_DB_URL" > /tmp/deploy_migration_list_after.txt 2>&1
+            LIST_EXIT=$?
+          else
+            supabase migration list > /tmp/deploy_migration_list_after.txt 2>&1
+            LIST_EXIT=$?
           fi
 
-      - name: Post-Deployment Smoke Test (Client Integration)
+          if [ $LIST_EXIT -ne 0 ]; then
+            echo "::error::MIGRATION APPLIED BUT POST-MIGRATION VERIFICATION FAILED OR AMBIGUOUS. Remote ledger query failed after push. WARNING: The database was NOT rolled back. Manual administrative review of project $SUPABASE_PROJECT_ID is required."
+            cat /tmp/deploy_migration_list_after.txt
+            exit 1
+          fi
+
+          cat /tmp/deploy_migration_list_after.txt
+
+          TRANSITION_JSON=$(npx tsx src/services/migration/migrationGuardCli.ts verify-transition \
+            "/tmp/deploy_migration_list_before.txt" \
+            "/tmp/deploy_migration_list_after.txt" \
+            "$TARGET_FILE" \
+            "supabase/migrations")
+          TRANS_EXIT=$?
+
+          if [ $TRANS_EXIT -ne 0 ]; then
+            echo "::error::MIGRATION APPLIED BUT TRANSITION VERIFICATION ASSERTION FAILED. WARNING: The database was NOT rolled back. Sequential migration contract violation detected."
+            exit 1
+          fi
+
+          echo "Transition Analysis: $TRANSITION_JSON"
+
+          REMAINING_COUNT=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.remainingPendingCount);" "$TRANSITION_JSON")
+          ALL_APPLIED=$(node -e "const d = JSON.parse(process.argv[1]); console.log(d.allApplied);" "$TRANSITION_JSON")
+
+          echo "remaining_count=$REMAINING_COUNT" >> $GITHUB_OUTPUT
+          echo "all_applied=$ALL_APPLIED" >> $GITHUB_OUTPUT
+
+      - name: Mandatory Migration-Specific Smoke Test
+        id: smoke_test
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          TARGET_FILE: ${{ steps.stage_worktree.outputs.target_file }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'zchadhvfffmmarpznyxi' }}
         run: |
-          echo "=== Running Live Client Integration Verification ==="
-          if [ -n "$VITE_SUPABASE_URL" ] && [ -n "$VITE_SUPABASE_ANON_KEY" ]; then
-            npm run test:real-supabase || {
-              echo "::warning::Client integration test reported pending items (expected until final migration is applied)."
-            }
-          else
-            echo "::info::Skipping client smoke test (client credentials not provided in secrets)."
+          echo "=== Running Mandatory Migration-Specific Live Smoke Test ==="
+          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
+            echo "::error::MIGRATION APPLIED BUT POST-APPLY SMOKE TEST CREDENTIALS MISSING. WARNING: The database was NOT rolled back. Client credentials (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY) are missing in environment secrets!"
+            exit 1
           fi
+
+          npx tsx src/services/migration/migrationGuardCli.ts smoke-check "$TARGET_FILE"
+          SMOKE_EXIT=$?
+          if [ $SMOKE_EXIT -ne 0 ]; then
+            echo "::error::MIGRATION APPLIED BUT POST-APPLY SMOKE TEST FAILED. WARNING: The database was NOT rolled back. Target migration $TARGET_FILE was applied but smoke check failed on project $SUPABASE_PROJECT_ID."
+            exit 1
+          fi
+          echo "Mandatory smoke verification passed."
 
       - name: Enforce Sequential Pipeline Stop & Publish Summary
         if: always()
+        env:
+          TARGET_FILE: ${{ steps.stage_worktree.outputs.target_file }}
+          REMAINING_COUNT: ${{ steps.verify_transition.outputs.remaining_count }}
+          ALL_APPLIED: ${{ steps.verify_transition.outputs.all_applied }}
+          JOB_STATUS: ${{ job.status }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
         run: |
-          TARGET_FILE="${{ steps.isolate_migration.outputs.target_file }}"
-          STAGED_COUNT="${{ steps.isolate_migration.outputs.staged_count }}"
-
           echo "### 🚀 Supabase Sequential Migration Deployment Report" >> $GITHUB_STEP_SUMMARY
           echo "- **Applied Migration:** \`$TARGET_FILE\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** \`${{ job.status }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployed By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Remaining Migrations Queued:** \`$STAGED_COUNT\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** \`$JOB_STATUS\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed By:** \`$ACTOR\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`$SHA\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Remaining Migrations Queued:** \`$REMAINING_COUNT\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "$STAGED_COUNT" -gt 0 ]; then
-            echo "> 🛑 **SEQUENTIAL STOP ENFORCED:** $STAGED_COUNT migration(s) remain pending. In accordance with safety rules, the pipeline has halted. Please review the live database status before dispatching the next migration." >> $GITHUB_STEP_SUMMARY
+
+          if [ "$JOB_STATUS" != "success" ]; then
+            echo "> ❌ **DEPLOYMENT FAILED OR BLOCKED:** Pipeline terminated with status \`$JOB_STATUS\`. Check workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          elif [ "$ALL_APPLIED" = "true" ]; then
+            echo "> ✅ **ALL MIGRATIONS APPLIED:** All schema migrations have been deployed and verified against production." >> $GITHUB_STEP_SUMMARY
           else
-            echo "> ✅ **ALL MIGRATIONS APPLIED:** All schema migrations have been deployed to production." >> $GITHUB_STEP_SUMMARY
+            echo "> 🛑 **SEQUENTIAL STOP ENFORCED:** $REMAINING_COUNT migration(s) remain pending. In accordance with safety rules, the pipeline has halted. Review live database status before dispatching the next migration." >> $GITHUB_STEP_SUMMARY
           fi

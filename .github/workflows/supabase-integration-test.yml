@@ -1,0 +1,77 @@
+name: Supabase Disposable Local Integration Test CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'supabase/**'
+      - 'src/**'
+      - 'package.json'
+      - '.github/workflows/supabase-integration-test.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'supabase/**'
+      - 'src/**'
+      - 'package.json'
+      - '.github/workflows/supabase-integration-test.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: supabase-isolated-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-integration-test:
+    name: Real Disposable Supabase Integration Tests (Secret-Free)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Project Dependencies
+        run: npm ci
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Disposable Local Supabase Suite
+        run: |
+          echo "Starting disposable local Supabase stack on Ubuntu runner..."
+          supabase init --workdir . --force || true
+          supabase start
+          echo "Local Supabase suite started successfully."
+
+      - name: Verify Applied Migrations on Disposable Engine
+        run: |
+          echo "Verifying all 4 original migrations applied in order..."
+          supabase migration list --db-url "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+
+      - name: Execute Real Integration Test Suite Against PostgreSQL
+        env:
+          DATABASE_URL: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+          SUPABASE_DB_URL: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+          VITE_SUPABASE_URL: 'http://127.0.0.1:54321'
+          ALLOW_LOCAL_DB: 'true'
+          NODE_ENV: 'test'
+        run: |
+          echo "Executing real integration test suite (zero simulation, actual PL/pgSQL RPCs)..."
+          npx tsx src/tests/realIsolatedIntegration.test.ts
+
+      - name: Teardown Disposable Supabase Suite
+        if: always()
+        run: |
+          echo "Stopping disposable local Supabase stack..."
+          supabase stop --no-backup || true
