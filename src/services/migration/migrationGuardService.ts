@@ -79,11 +79,16 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
       continue;
     }
 
-    const localCol = columns[0] ?? '';
-    const remoteCol = columns[1] ?? '';
+ const localCol = (columns[0] ?? '')
+  .replace(/[`]/g, '')
+  .trim();
 
-    const isLocalTs = /^\d{14}$/.test(localCol);
-    const isRemoteTs = /^\d{14}$/.test(remoteCol);
+const remoteCol = (columns[1] ?? '')
+  .replace(/[`]/g, '')
+  .trim();
+
+const isLocalTs = /^\d{14}$/.test(localCol);
+const isRemoteTs = /^\d{14}$/.test(remoteCol);
 
     // Ignore separator/header rows
     if (!isLocalTs && !isRemoteTs) {
