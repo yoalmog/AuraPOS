@@ -1,5 +1,4 @@
             imageUrl: p.image_url,
-            syncStatus: 'SYNCED',
             createdAt: p.created_at,
             updatedAt: p.updated_at
           });
