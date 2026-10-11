@@ -33,10 +33,15 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
     .map(l => l.trim())
     .filter(Boolean);
 
-  // Support Supabase CLI output changes: Local/Remote or LOCAL/REMOTE
+  // Support Supabase CLI output:
+  // Local | Remote | Time (UTC)
+  // LOCAL | REMOTE | TIME (UTC)
   const headerIdx = lines.findIndex(l => {
     const normalized = l.toUpperCase();
-    return normalized.includes('LOCAL') && normalized.includes('REMOTE');
+    return (
+      normalized.includes('LOCAL') &&
+      normalized.includes('REMOTE')
+    );
   });
 
   if (headerIdx === -1) {
@@ -50,30 +55,45 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
 
+    // Only parse table rows
     if (!line.startsWith('|')) continue;
 
+    /*
+      Keep empty columns.
+      Important:
+      
+      Normal applied:
+      | 20240523000001 | 20240523000001 | 2024 |
+
+      Local only:
+      | 20240523000001 |                | 2024 |
+
+      Remote only:
+      |                | 20240523000001 | 2024 |
+    */
     const parts = line
       .split('|')
-      .map(p => p.trim())
-      .filter(Boolean);
+      .map(p => p.trim());
 
-    if (parts.length < 2) continue;
+    if (parts.length < 3) continue;
 
-    // Format:
-    // | Local | Remote | Time (UTC) |
-    // after filter(Boolean):
-    // [LocalTimestamp, RemoteTimestamp, Time]
-    const localCol = parts[0];
-    const remoteCol = parts[1];
+    // parts[0] = empty before first |
+    // parts[1] = Local
+    // parts[2] = Remote
+    // parts[3] = Time
+    const localCol = parts[1] ?? '';
+    const remoteCol = parts[2] ?? '';
 
     const isLocalTs = /^\d{14}$/.test(localCol);
     const isRemoteTs = /^\d{14}$/.test(remoteCol);
 
-    // Ignore separator rows
+    // Ignore separator lines:
+    // |--------------|--------------|
     if (!isLocalTs && !isRemoteTs) {
       continue;
     }
 
+    // Both sides exist
     if (isLocalTs && isRemoteTs) {
       results.push({
         local: localCol,
@@ -81,20 +101,32 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
         isApplied: localCol === remoteCol,
         isMismatched: localCol !== remoteCol
       });
-    } else if (isLocalTs) {
+
+      continue;
+    }
+
+    // Local exists only
+    if (isLocalTs && !isRemoteTs) {
       results.push({
         local: localCol,
         remote: null,
         isApplied: false,
         isMismatched: false
       });
-    } else {
+
+      continue;
+    }
+
+    // Remote exists only
+    if (!isLocalTs && isRemoteTs) {
       results.push({
         local: null,
         remote: remoteCol,
         isApplied: true,
         isMismatched: false
       });
+
+      continue;
     }
   }
 
