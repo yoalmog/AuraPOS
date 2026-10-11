@@ -30,14 +30,11 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
 
   const lines = rawOutput
     .split('\n')
-    .map(l => l.trim())
+    .map((l) => l.trim())
     .filter(Boolean);
 
-  // Support Supabase CLI output:
-  // Local | Remote | Time (UTC)
-  // LOCAL | REMOTE | TIME (UTC)
-  const headerIdx = lines.findIndex(l => {
-    const normalized = l.toUpperCase();
+  const headerIdx = lines.findIndex((line) => {
+    const normalized = line.toUpperCase();
     return (
       normalized.includes('LOCAL') &&
       normalized.includes('REMOTE')
@@ -55,45 +52,45 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
 
-    // Only parse table rows
-    if (!line.startsWith('|')) continue;
+    // Ignore lines that are not table rows
+    if (!line.includes('|')) {
+      continue;
+    }
+
+    let columns = line
+      .split('|')
+      .map((p) => p.trim());
 
     /*
-      Keep empty columns.
-      Important:
-      
-      Normal applied:
-      | 20240523000001 | 20240523000001 | 2024 |
+      Supports both:
 
-      Local only:
-      | 20240523000001 |                | 2024 |
+      | Local | Remote | Time |
+      and
+      Local | Remote | Time
 
-      Remote only:
-      |                | 20240523000001 | 2024 |
+      Remove only the artificial empty first column
+      created by markdown tables.
     */
-    const parts = line
-      .split('|')
-      .map(p => p.trim());
+    if (columns[0] === '') {
+      columns = columns.slice(1);
+    }
 
-    if (parts.length < 3) continue;
+    if (columns.length < 2) {
+      continue;
+    }
 
-    // parts[0] = empty before first |
-    // parts[1] = Local
-    // parts[2] = Remote
-    // parts[3] = Time
-    const localCol = parts[1] ?? '';
-    const remoteCol = parts[2] ?? '';
+    const localCol = columns[0] ?? '';
+    const remoteCol = columns[1] ?? '';
 
     const isLocalTs = /^\d{14}$/.test(localCol);
     const isRemoteTs = /^\d{14}$/.test(remoteCol);
 
-    // Ignore separator lines:
-    // |--------------|--------------|
+    // Ignore separator/header rows
     if (!isLocalTs && !isRemoteTs) {
       continue;
     }
 
-    // Both sides exist
+    // Both Local and Remote exist
     if (isLocalTs && isRemoteTs) {
       results.push({
         local: localCol,
@@ -105,7 +102,7 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
       continue;
     }
 
-    // Local exists only
+    // Local exists, Remote missing
     if (isLocalTs && !isRemoteTs) {
       results.push({
         local: localCol,
@@ -117,7 +114,7 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
       continue;
     }
 
-    // Remote exists only
+    // Remote exists, Local missing
     if (!isLocalTs && isRemoteTs) {
       results.push({
         local: null,
@@ -131,6 +128,9 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
   }
 
   if (results.length === 0) {
+    console.error('RAW SUPABASE MIGRATION OUTPUT:');
+    console.error(rawOutput);
+
     throw new Error(
       'No valid migration rows parsed from ledger: failing closed'
     );
