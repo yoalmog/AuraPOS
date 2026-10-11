@@ -260,16 +260,18 @@ export async function runRealIsolatedIntegrationTests(): Promise<IsolatedIntegra
       try {
         await testClient.query('BEGIN');
         await testClient.query(`SET ROLE ${role}`);
+        // Supabase auth.role() reads the JWT role claim; SET ROLE alone is not enough.
+        await testClient.query(`SET request.jwt.claim.role = '${role}'`);
         if (userId) {
           await testClient.query(`SET request.jwt.claim.sub = '${userId}'`);
-          await testClient.query(`SET request.jwt.claim.role = '${role}'`);
         } else {
-          await testClient.query(`RESET request.jwt.claim.sub`);
+          await testClient.query('RESET request.jwt.claim.sub');
         }
 
         const salePayload = JSON.stringify({
           id: crypto.randomUUID(),
           store_id: saleStoreId,
+          receipt_number: `REC-AUTH-${crypto.randomUUID()}`,
           total: 4.50,
           subtotal: 4.50
         });
@@ -294,9 +296,12 @@ export async function runRealIsolatedIntegrationTests(): Promise<IsolatedIntegra
     record(
       'Authorization Matrix',
       'Sensitive RPC Authorization: Anonymous Caller',
-      !anonResult.success && Boolean(anonResult.error?.includes('Access denied: anonymous callers')),
+      !anonResult.success && Boolean(
+        anonResult.error?.includes('permission denied for function sync_process_sale') ||
+        anonResult.error?.includes('Access denied: anonymous callers')
+      ),
       'Anonymous caller executes sync_process_sale',
-      'Rejected: Access denied: anonymous callers cannot process sales',
+      'Rejected by PostgreSQL EXECUTE privilege or the RPC anonymous-caller guard',
       anonResult.success ? 'UNSAFE: Anon call succeeded!' : `Blocked: ${anonResult.error}`
     );
 
@@ -379,16 +384,31 @@ export async function runRealIsolatedIntegrationTests(): Promise<IsolatedIntegra
         AND routine_name IN ('sync_process_sale', 'process_sale_atomic', 'sync_backend_health', 'sync_pull_changes')
     `);
 
-    const anonPrivs = privRes.rows.filter(r => r.grantee.toLowerCase() === 'anon');
+    // sync_backend_health is intentionally executable by anon for diagnostics.
+    // The sensitive RPCs must have no anon grants; authenticated must have only
+    // the explicitly reviewed grants among this audited function set.
+    const anonSensitivePrivs = privRes.rows.filter(
+      r => r.grantee.toLowerCase() === 'anon' && r.routine_name !== 'sync_backend_health'
+    );
     const authPrivs = privRes.rows.filter(r => r.grantee.toLowerCase() === 'authenticated');
+    const expectedAuthenticatedRoutines = new Set([
+      'sync_process_sale',
+      'process_sale_atomic',
+      'sync_backend_health',
+      'sync_pull_changes'
+    ]);
+    const actualAuthenticatedRoutines = new Set(authPrivs.map(r => r.routine_name));
+    const authGrantsMatch =
+      authPrivs.length === expectedAuthenticatedRoutines.size &&
+      [...expectedAuthenticatedRoutines].every(name => actualAuthenticatedRoutines.has(name));
 
     record(
       'Privilege Catalog Audit',
       'Effective EXECUTE Grants on Sensitive Routines',
-      anonPrivs.length === 0 && authPrivs.length > 0,
-      'Verifies information_schema.routine_privileges: anon has 0 EXECUTE privileges; authenticated has selective grants',
-      'anon privileges == 0; authenticated has selective reviewed grants',
-      `anon privileges: ${anonPrivs.length}, authenticated privileges: ${authPrivs.length}`
+      anonSensitivePrivs.length === 0 && authGrantsMatch,
+      'Checks anon has no EXECUTE grant on sensitive RPCs while allowing the health-check exception; authenticated grants match the reviewed allowlist',
+      'No anon grants on sensitive RPCs; authenticated grants exactly match the four-function allowlist',
+      `anon sensitive grants: ${anonSensitivePrivs.length}, authenticated grants: ${authPrivs.length}, allowlist match: ${authGrantsMatch}`
     );
 
     // =========================================================================
@@ -416,6 +436,12 @@ export async function runRealIsolatedIntegrationTests(): Promise<IsolatedIntegra
     // =========================================================================
     // STEP 7: BUSINESS ATOMICITY, ROLLBACK & DUPLICATE-SALE RETRY
     // =========================================================================
+
+    // Run the business-operation RPCs as a backend worker. Both the PostgreSQL
+    // role and Supabase JWT role claim must be set for auth.role() to see service_role.
+    await client.query('SET ROLE service_role');
+    await client.query("SET request.jwt.claim.role = 'service_role'");
+    await client.query('RESET request.jwt.claim.sub');
 
     // 7A: Successful Atomic Sale with Stock Movement Deduction
     const saleId = crypto.randomUUID();
@@ -477,6 +503,9 @@ export async function runRealIsolatedIntegrationTests(): Promise<IsolatedIntegra
     await testRollbackClient.connect();
     try {
       await testRollbackClient.query('BEGIN');
+      await testRollbackClient.query('SET LOCAL ROLE service_role');
+      await testRollbackClient.query("SET LOCAL request.jwt.claim.role = 'service_role'");
+      await testRollbackClient.query('RESET request.jwt.claim.sub');
       // Pass malformed payload missing sale id to trigger exception
       await testRollbackClient.query(
         `SELECT public.sync_process_sale('{"store_id": null}'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, NULL)`
