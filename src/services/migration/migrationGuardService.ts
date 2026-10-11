@@ -28,60 +28,67 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
     throw new Error('Ledger output is empty: failing closed');
   }
 
-  const lines = rawOutput.split('\n').map(l => l.trim()).filter(Boolean);
-  const headerIdx = lines.findIndex(l => l.includes('LOCAL') && l.includes('REMOTE'));
+  const lines = rawOutput
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+
+  // Support Supabase CLI output changes: Local/Remote or LOCAL/REMOTE
+  const headerIdx = lines.findIndex(l => {
+    const normalized = l.toUpperCase();
+    return normalized.includes('LOCAL') && normalized.includes('REMOTE');
+  });
+
   if (headerIdx === -1) {
-    throw new Error('Malformed ledger output: table header with LOCAL and REMOTE columns not found');
+    throw new Error(
+      'Malformed ledger output: table header with LOCAL and REMOTE columns not found'
+    );
   }
 
   const results: MigrationStatus[] = [];
+
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
-    if (!line.startsWith('|')) continue;
-    const parts = line.split('|').map(p => p.trim());
-    // Format: | LOCAL | REMOTE | TIME (UTC) |
-    // parts[0] is empty, parts[1] is LOCAL, parts[2] is REMOTE, parts[3] is TIME
-    if (parts.length < 3) continue;
 
-    const localCol = parts[1];
-    const remoteCol = parts[2];
+    if (!line.startsWith('|')) continue;
+
+    const parts = line
+      .split('|')
+      .map(p => p.trim())
+      .filter(Boolean);
+
+    if (parts.length < 2) continue;
+
+    // Format:
+    // | Local | Remote | Time (UTC) |
+    // after filter(Boolean):
+    // [LocalTimestamp, RemoteTimestamp, Time]
+    const localCol = parts[0];
+    const remoteCol = parts[1];
 
     const isLocalTs = /^\d{14}$/.test(localCol);
     const isRemoteTs = /^\d{14}$/.test(remoteCol);
 
-    // Ignore horizontal separator rows like |-------|--------|
+    // Ignore separator rows
     if (!isLocalTs && !isRemoteTs) {
       continue;
     }
 
     if (isLocalTs && isRemoteTs) {
-      if (localCol === remoteCol) {
-        // Normal applied migration
-        results.push({
-          local: localCol,
-          remote: remoteCol,
-          isApplied: true,
-          isMismatched: false
-        });
-      } else {
-        // Mismatched ledger row
-        results.push({
-          local: localCol,
-          remote: remoteCol,
-          isApplied: false,
-          isMismatched: true
-        });
-      }
-    } else if (isLocalTs && !isRemoteTs) {
-      // Local-only unapplied migration
+      results.push({
+        local: localCol,
+        remote: remoteCol,
+        isApplied: localCol === remoteCol,
+        isMismatched: localCol !== remoteCol
+      });
+    } else if (isLocalTs) {
       results.push({
         local: localCol,
         remote: null,
         isApplied: false,
         isMismatched: false
       });
-    } else if (!isLocalTs && isRemoteTs) {
-      // Remote-only migration (applied on remote but absent locally)
+    } else {
       results.push({
         local: null,
         remote: remoteCol,
@@ -92,7 +99,9 @@ export function parseMigrationListLedger(rawOutput: string): MigrationStatus[] {
   }
 
   if (results.length === 0) {
-    throw new Error('No valid migration rows parsed from ledger: failing closed');
+    throw new Error(
+      'No valid migration rows parsed from ledger: failing closed'
+    );
   }
 
   return results;
