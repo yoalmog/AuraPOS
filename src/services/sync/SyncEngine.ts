@@ -1,316 +1,801 @@
-import React, { useState, useEffect } from 'react';
-import { usePOS } from '../../../context/POSContext.tsx';
-import { SyncEngine, FailedSyncEvent } from '../../../services/sync/SyncEngine.ts';
-import { NativeBridgeService } from '../../../services/native/NativeBridgeService.ts';
-import {
-  RefreshCw,
-  Wifi,
-  WifiOff,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  ArrowUpCircle,
-  ArrowDownCircle,
-  ShieldCheck,
-  RotateCcw,
-  Terminal,
-  Database,
-  Info
-} from 'lucide-react';
+import { supabase, isSupabaseConfigured } from '../supabase/supabaseClient.ts';
+import { LocalDB } from '../db/localDatabase.ts';
+import { StorageService } from '../storageService.ts';
+import { NativeBridgeService } from '../native/NativeBridgeService.ts';
+import { SyncErrorClassifier } from './SyncErrorClassifier.ts';
 
-export const SyncCenterTab: React.FC = () => {
-  const {
-    isOffline,
-    isSyncing,
-    pendingSyncCount,
-    triggerSync,
-    retryFailedSync,
-    syncEngineStatus,
-    settings,
-    isOwner,
-    t
-  } = usePOS();
+export type SyncConnectionState = 'ONLINE' | 'OFFLINE' | 'CONNECTING' | 'SYNCING' | 'SYNC_ERROR';
 
-  const [failedEvents, setFailedEvents] = useState<FailedSyncEvent[]>([]);
-  const [terminalInfo, setTerminalInfo] = useState<any>(null);
-  const [isLoadingEvents, setIsLoadingEvents] = useState<boolean>(false);
+export interface SyncEngineStatus {
+  state: SyncConnectionState;
+  isOnline: boolean;
+  lastSuccessfulSync: string | null;
+  lastSyncAttempt: string | null;
+  pendingUploads: number;
+  pendingDownloads: number;
+  failedEventsCount: number;
+  currentOperation: string;
+}
 
-  useEffect(() => {
-    loadSyncData();
-  }, [syncEngineStatus, isSyncing]);
+export interface FailedSyncEvent {
+  id: string;
+  clientEventId: string;
+  entityType: string;
+  entityId: string;
+  operation: string;
+  errorMessage?: string;
+  attempts: number;
+  createdAt: string;
+}
 
-  const loadSyncData = async () => {
-    setIsLoadingEvents(true);
-    try {
-      const failed = await SyncEngine.getFailedEvents();
-      setFailedEvents(failed);
+/**
+ * AuraPOS Centralized Offline-First Synchronization Engine
+ * Conforming to Sections 12, 13, 14, 15, 16, 17, 18, 19, 21, 25:
+ * - Single source of truth for sync orchestration across the app
+ * - Bidirectional synchronization with dependency ordering
+ * - Safe idempotency via client_event_id
+ * - Sync checkpoints and cursors for incremental downloads
+ * - Automatic execution upon network reconnect + manual Sync Now
+ */
+class SyncEngineClass {
+  private isRunning = false;
+  private isSyncing = false;
+  private syncTimer: any = null;
+  private lastSuccessfulSync: string | null = null;
+  private lastSyncAttempt: string | null = null;
+  private currentOp = 'Idle';
+  private listeners = new Set<(status: SyncEngineStatus) => void>();
 
-      if (NativeBridgeService.isNativeAndroid()) {
-        const idInfo = NativeBridgeService.localDb.getTerminalIdentity();
-        setTerminalInfo(idInfo);
+  constructor() {
+    this.lastSuccessfulSync = localStorage.getItem('aurapos_last_sync_success');
+  }
+
+  start(): void {
+    if (this.isRunning) return;
+    this.isRunning = true;
+
+    // Listen to browser network changes
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', this.handleNetworkOnline);
+      window.addEventListener('offline', this.handleNetworkOffline);
+    }
+
+    // Auto-trigger sync if online at startup
+    if (this.isOnline()) {
+      setTimeout(() => this.syncNow(), 1500);
+    }
+
+    // Periodic sync check every 60 seconds when online
+    this.syncTimer = setInterval(() => {
+      if (this.isOnline() && !this.isSyncing) {
+        this.syncNow();
       }
-    } catch (_) {
-    } finally {
-      setIsLoadingEvents(false);
+    }, 60000);
+
+    this.notify();
+  }
+
+  stop(): void {
+    this.isRunning = false;
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+      this.syncTimer = null;
     }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', this.handleNetworkOnline);
+      window.removeEventListener('offline', this.handleNetworkOffline);
+    }
+  }
+
+  subscribe(listener: (status: SyncEngineStatus) => void): () => void {
+    this.listeners.add(listener);
+    listener(this.getStatus());
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(): void {
+    const status = this.getStatus();
+    this.listeners.forEach(fn => {
+      try { fn(status); } catch (_) {}
+    });
+  }
+
+  private handleNetworkOnline = (): void => {
+    this.notify();
+    // Requirement 21: Automatically start synchronization when internet becomes available
+    this.syncNow();
   };
 
-  const handleManualSync = () => {
-    triggerSync();
+  private handleNetworkOffline = (): void => {
+    this.notify();
   };
 
-  const handleRetryFailed = async () => {
-    await retryFailedSync();
-    await loadSyncData();
-  };
+  isOnline(): boolean {
+    return typeof navigator !== 'undefined' ? navigator.onLine : true;
+  }
 
-  const formatTimestamp = (iso: string | null) => {
-    if (!iso) return t('sync.never', 'Never');
+  getStatus(): SyncEngineStatus {
+    const online = this.isOnline();
+    let state: SyncConnectionState = online ? 'ONLINE' : 'OFFLINE';
+
+    if (this.isSyncing) {
+      state = 'SYNCING';
+    }
+
+    return {
+      state,
+      isOnline: online,
+      lastSuccessfulSync: this.lastSuccessfulSync,
+      lastSyncAttempt: this.lastSyncAttempt,
+      pendingUploads: this.getPendingCountSync(),
+      pendingDownloads: 0,
+      failedEventsCount: 0,
+      currentOperation: this.currentOp
+    };
+  }
+
+  private getPendingCountSync(): number {
     try {
-      return new Date(iso).toLocaleString();
+      const q = StorageService.getOfflineQueue();
+      return q.filter(item => item.syncStatus !== 'synced').length;
     } catch {
-      return iso;
+      return 0;
     }
-  };
+  }
 
-  return (
-    <div className="space-y-6">
-      {/* Header Info */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
-        <div className="flex items-center gap-3.5">
-          <div
-            className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-              isSyncing
-                ? 'bg-blue-500/10 text-blue-600'
-                : syncEngineStatus?.state === 'SYNC_ERROR'
-                ? 'bg-rose-500/10 text-rose-600'
-                : isOffline
-                ? 'bg-amber-500/10 text-amber-600'
-                : 'bg-emerald-500/10 text-emerald-600'
-            }`}
-          >
-            {isSyncing ? (
-              <RefreshCw className="w-6 h-6 animate-spin" />
-            ) : syncEngineStatus?.state === 'SYNC_ERROR' ? (
-              <AlertTriangle className="w-6 h-6" />
-            ) : isOffline ? (
-              <WifiOff className="w-6 h-6" />
-            ) : (
-              <Wifi className="w-6 h-6" />
-            )}
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-[var(--theme-text-primary)]">
-                {t('sync.centerTitle', 'Offline-First Synchronization Engine')}
-              </h3>
-              <span
-                className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                  isSyncing
-                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
-                    : syncEngineStatus?.state === 'SYNC_ERROR'
-                    ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300'
-                    : isOffline
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
-                }`}
-              >
-                {syncEngineStatus?.state || (isOffline ? 'OFFLINE' : 'ONLINE')}
-              </span>
-            </div>
-            <p className="text-xs text-[var(--theme-text-secondary)] mt-0.5">
-              {isOffline
-                ? t('sync.offlineNotice', 'Operating offline. Local database is active and recording all transactions.')
-                : t('sync.onlineNotice', 'Connected. Automatic bidirectional sync active between local terminal & cloud.')}
-            </p>
-          </div>
-        </div>
+  async getPendingCount(): Promise<number> {
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        const res = await NativeBridgeService.localDb.getPendingSyncCount();
+        if (res.success) return res.pendingCount;
+      } catch (_) {}
+    }
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2.5">
-          {failedEvents.length > 0 && (
-            <button
-              onClick={handleRetryFailed}
-              disabled={isSyncing}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>{t('sync.retryFailed', 'Retry Failed')} ({failedEvents.length})</span>
-            </button>
-          )}
+    try {
+      const events = await LocalDB.getAll<any>('sync_events');
+      const pendingDb = events.filter(e => e.status === 'PENDING').length;
+      const queue = this.getPendingCountSync();
+      return Math.max(pendingDb, queue);
+    } catch {
+      return this.getPendingCountSync();
+    }
+  }
 
-          <button
-            onClick={handleManualSync}
-            disabled={isSyncing}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-[var(--theme-primary)] hover:opacity-90 text-white shadow-xs transition-opacity cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? t('sync.syncingBtn', 'Syncing...') : t('sync.syncNowBtn', 'Sync Now')}</span>
-          </button>
-        </div>
-      </div>
+  async getFailedEvents(): Promise<FailedSyncEvent[]> {
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        const res = await NativeBridgeService.localDb.getSyncEvents('FAILED', 50);
+        if (res.success && Array.isArray(res.events)) {
+          return res.events.map(e => ({
+            id: e.id,
+            clientEventId: e.clientEventId,
+            entityType: e.entityType,
+            entityId: e.entityId,
+            operation: e.operation,
+            errorMessage: e.errorMessage,
+            attempts: e.attempts || 0,
+            createdAt: e.createdAt
+          }));
+        }
+      } catch (_) {}
+    }
 
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Pending Uploads */}
-        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
-          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
-            <span className="text-xs font-medium">{t('sync.pendingUploads', 'Pending Uploads')}</span>
-            <ArrowUpCircle className="w-4 h-4 text-sky-500" />
-          </div>
-          <p className="text-2xl font-bold text-[var(--theme-text-primary)] mt-1.5 font-mono">
-            {pendingSyncCount}
-          </p>
-          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
-            {pendingSyncCount === 0 ? t('sync.allSaved', 'All transactions uploaded') : t('sync.queuedToUpload', 'Queued for cloud synchronization')}
-          </span>
-        </div>
+    try {
+      const events = await LocalDB.getAll<any>('sync_events');
+      return events
+        .filter(e => e.status === 'FAILED')
+        .map(e => ({
+          id: e.id,
+          clientEventId: e.clientEventId || e.id,
+          entityType: e.entityType || 'unknown',
+          entityId: e.entityId || '',
+          operation: e.operation || 'INSERT',
+          errorMessage: e.errorMessage || 'Synchronization error',
+          attempts: e.attempts || 1,
+          createdAt: e.createdAt || new Date().toISOString()
+        }));
+    } catch {
+      return [];
+    }
+  }
 
-        {/* Pending Downloads */}
-        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
-          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
-            <span className="text-xs font-medium">{t('sync.pendingDownloads', 'Pending Downloads')}</span>
-            <ArrowDownCircle className="w-4 h-4 text-emerald-500" />
-          </div>
-          <p className="text-2xl font-bold text-[var(--theme-text-primary)] mt-1.5 font-mono">
-            {syncEngineStatus?.pendingDownloads || 0}
-          </p>
-          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
-            {t('sync.masterDataSync', 'Master catalog & settings')}
-          </span>
-        </div>
+  async retryFailed(): Promise<{ success: boolean; error?: string }> {
+    if (NativeBridgeService.isNativeAndroid()) {
+      try {
+        await NativeBridgeService.localDb.retrySync();
+      } catch (_) {}
+    }
 
-        {/* Last Successful Sync */}
-        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
-          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
-            <span className="text-xs font-medium">{t('sync.lastSuccess', 'Last Success')}</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          </div>
-          <p className="text-xs font-bold text-[var(--theme-text-primary)] mt-2 font-mono truncate">
-            {formatTimestamp(syncEngineStatus?.lastSuccessfulSync || null)}
-          </p>
-          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
-            {t('sync.verifiedSync', 'Verified cloud confirmation')}
-          </span>
-        </div>
+    try {
+      const events = await LocalDB.getAll<any>('sync_events');
+      for (const ev of events) {
+        if (ev.status === 'FAILED') {
+          ev.status = 'PENDING';
+          ev.attempts = 0;
+          await LocalDB.put('sync_events', ev);
+        }
+      }
+    } catch (_) {}
 
-        {/* Last Attempt */}
-        <div className="p-4 rounded-xl theme-surface border border-[var(--theme-border)]">
-          <div className="flex items-center justify-between text-[var(--theme-text-secondary)]">
-            <span className="text-xs font-medium">{t('sync.lastAttempt', 'Last Attempt')}</span>
-            <Clock className="w-4 h-4 text-amber-500" />
-          </div>
-          <p className="text-xs font-bold text-[var(--theme-text-primary)] mt-2 font-mono truncate">
-            {formatTimestamp(syncEngineStatus?.lastSyncAttempt || null)}
-          </p>
-          <span className="text-[10px] text-[var(--theme-text-secondary)] mt-1 block">
-            {syncEngineStatus?.currentOperation || 'Idle'}
-          </span>
-        </div>
-      </div>
+    return this.syncNow();
+  }
 
-      {/* Terminal Identification & Isolation (Sections 26 & 27) */}
-      <div className="p-4 rounded-2xl theme-surface border border-[var(--theme-border)] space-y-3">
-        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--theme-text-secondary)]">
-          <Terminal className="w-4 h-4" />
-          <span>{t('sync.terminalIdentity', 'Terminal Identification & Isolation (Keystore Protected)')}</span>
-        </div>
+  /**
+   * Main Bidirectional Synchronization Pipeline
+   */
+  async syncNow(): Promise<{ success: boolean; uploaded?: number; downloaded?: number; error?: string }> {
+    if (this.isSyncing) {
+      return { success: false, error: 'Synchronization already in progress' };
+    }
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
-          <div className="p-3 rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
-            <span className="text-[10px] text-[var(--theme-text-secondary)] uppercase block font-sans font-bold">
-              {t('sync.storeId', 'Store ID')}
-            </span>
-            <span className="font-bold text-[var(--theme-text-primary)] truncate block mt-0.5">
-              {terminalInfo?.storeId || settings.id || 'store_aura_main'}
-            </span>
-          </div>
+    if (!this.isOnline()) {
+      this.notify();
+      return { success: false, error: 'Cannot sync while offline' };
+    }
 
-          <div className="p-3 rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
-            <span className="text-[10px] text-[var(--theme-text-secondary)] uppercase block font-sans font-bold">
-              {t('sync.terminalId', 'Persistent Terminal ID')}
-            </span>
-            <span className="font-bold text-[var(--theme-text-primary)] truncate block mt-0.5">
-              {terminalInfo?.terminalId || 'term_aura_pos_01'}
-            </span>
-          </div>
+    this.isSyncing = true;
+    this.lastSyncAttempt = new Date().toISOString();
+    this.currentOp = 'Preparing synchronization...';
+    this.notify();
 
-          <div className="p-3 rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
-            <span className="text-[10px] text-[var(--theme-text-secondary)] uppercase block font-sans font-bold">
-              {t('sync.databaseEngine', 'Local Database Engine')}
-            </span>
-            <span className="font-bold text-emerald-600 truncate block mt-0.5">
-              {NativeBridgeService.isNativeAndroid() ? 'Android Room + SQLite (v2)' : 'IndexedDB (Offline Engine v4)'}
-            </span>
-          </div>
-        </div>
-      </div>
+    let uploadedCount = 0;
+    let downloadedCount = 0;
 
-      {/* Failed Sync Events (For Administrators - Section 33) */}
-      <div className="p-4 rounded-2xl theme-surface border border-[var(--theme-border)] space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
-            <h4 className="text-sm font-bold text-[var(--theme-text-primary)]">
-              {t('sync.failedEventsTitle', 'Failed Sync Events (Administrator Inspection)')}
-            </h4>
-          </div>
-          <span className="text-xs text-[var(--theme-text-secondary)]">
-            {failedEvents.length} {t('sync.issuesReported', 'issue(s)')}
-          </span>
-        </div>
+    try {
+      // 1. If running on native Android, trigger Android Room native sync engine
+      if (NativeBridgeService.isNativeAndroid()) {
+        try {
+          this.currentOp = 'Triggering native Android sync engine...';
+          await NativeBridgeService.localDb.triggerSync();
+        } catch (nativeErr: any) {
+          console.warn('Native Android sync trigger notice:', nativeErr?.message);
+        }
+      }
 
-        {failedEvents.length === 0 ? (
-          <div className="p-6 text-center rounded-xl bg-[var(--theme-surface-variant)] border border-[var(--theme-border)]">
-            <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
-            <p className="text-xs font-bold text-[var(--theme-text-primary)]">
-              {t('sync.noFailedEvents', 'Zero Failed Synchronization Events')}
-            </p>
-            <p className="text-[11px] text-[var(--theme-text-secondary)] mt-0.5">
-              {t('sync.cleanPipeline', 'All transactional and catalog events are processed or queued safely.')}
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-[var(--theme-text-secondary)]">
-              <thead className="bg-[var(--theme-surface-variant)] border-b border-[var(--theme-border)] text-[var(--theme-text-primary)] font-bold uppercase text-[10px]">
-                <tr>
-                  <th className="py-2.5 px-3">Client Event ID</th>
-                  <th className="py-2.5 px-3">Entity Type</th>
-                  <th className="py-2.5 px-3">Operation</th>
-                  <th className="py-2.5 px-3">Attempts</th>
-                  <th className="py-2.5 px-3">Error Cause</th>
-                  <th className="py-2.5 px-3 text-right">Timestamp</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--theme-border)]">
-                {failedEvents.map(ev => (
-                  <tr key={ev.id} className="hover:bg-[var(--theme-surface-variant)] transition-colors">
-                    <td className="py-2 px-3 font-mono text-[11px] text-[var(--theme-text-primary)]">
-                      {ev.clientEventId}
-                    </td>
-                    <td className="py-2 px-3 uppercase text-[10px] font-bold">
-                      {ev.entityType}
-                    </td>
-                    <td className="py-2 px-3 uppercase font-semibold">
-                      {ev.operation}
-                    </td>
-                    <td className="py-2 px-3 font-mono">
-                      {ev.attempts}
-                    </td>
-                    <td className="py-2 px-3 text-rose-600 max-w-xs truncate">
-                      {ev.errorMessage || 'Server unreachable'}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono text-[11px]">
-                      {new Date(ev.createdAt).toLocaleTimeString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
+      // 2. If Supabase is configured, execute bidirectional sync with cloud
+      if (isSupabaseConfigured && supabase) {
+        const storeId = StorageService.getSettings()?.id || 'store_aura_main';
+
+        // A. UPLOAD FLOW: Execute in foreign-key dependency order (Section 14)
+        this.currentOp = 'Uploading pending offline changes...';
+        this.notify();
+
+        // Step 1: Upload offline customers
+        uploadedCount += await this.uploadPendingCustomers(storeId);
+
+        // Step 2: Upload offline sales, sale_items & payments with idempotency
+        uploadedCount += await this.uploadPendingSales(storeId);
+
+        // Step 3: Upload offline inventory movements
+        uploadedCount += await this.uploadPendingInventoryMovements(storeId);
+
+        // Step 4: Upload offline cash shifts & movements (Step 15)
+        uploadedCount += await this.uploadPendingCashShifts(storeId);
+        uploadedCount += await this.uploadPendingCashMovements(storeId);
+
+        // B. DOWNLOAD FLOW: Download master data in dependency order using sync cursors (Section 15, 18)
+        this.currentOp = 'Downloading master data updates...';
+        this.notify();
+
+        // Step 1: Categories & Category Translations (incremental via cursor)
+        downloadedCount += await this.downloadCategories(storeId);
+
+        // Step 2: Products & Variants & Translations (incremental via cursor)
+        downloadedCount += await this.downloadProducts(storeId);
+
+        // Step 3: Taxes (incremental via cursor)
+        downloadedCount += await this.downloadTaxes(storeId);
+
+        // Step 4: Customers (incremental via cursor)
+        downloadedCount += await this.downloadCustomers(storeId);
+
+        // Step 5: Printers (incremental via cursor)
+        downloadedCount += await this.downloadPrinters(storeId);
+
+        // Step 6: Store Settings
+        downloadedCount += await this.downloadStoreSettings(storeId);
+
+        // Step 7: User Profiles & Roles (incremental via cursor)
+        downloadedCount += await this.downloadUserProfiles(storeId);
+      }
+
+      // 3. Mark successful sync
+      this.lastSuccessfulSync = new Date().toISOString();
+      localStorage.setItem('aurapos_last_sync_success', this.lastSuccessfulSync);
+      this.currentOp = 'Idle';
+      this.notify();
+
+      return { success: true, uploaded: uploadedCount, downloaded: downloadedCount };
+    } catch (err: any) {
+      const classified = SyncErrorClassifier.classify(err);
+      console.warn(`[SyncEngine] Synchronization cycle error [${classified.type}] (retryable=${classified.retryable}):`, classified.message);
+      this.currentOp = `Sync error: ${classified.message}`;
+      this.notify();
+      return { success: false, error: classified.message };
+    } finally {
+      this.isSyncing = false;
+      this.currentOp = 'Idle';
+      this.notify();
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Incremental Cursor Checkpoint Helpers (Section 4 & 5)
+  // -------------------------------------------------------------
+
+  private async getCursor(entityType: string, storeId: string): Promise<string | null> {
+    try {
+      const rec = await LocalDB.getById<any>('sync_cursors', `${storeId}_${entityType}`);
+      return rec?.cursor || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async saveCursor(entityType: string, storeId: string, cursor: string): Promise<void> {
+    try {
+      await LocalDB.put('sync_cursors', {
+        id: `${storeId}_${entityType}`,
+        storeId,
+        entityType,
+        cursor,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (_) {}
+  }
+
+  // -------------------------------------------------------------
+  // Upload Helpers (Enforcing Section 3, 14 & 16 Idempotency)
+  // -------------------------------------------------------------
+
+  private async uploadPendingCustomers(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    let count = 0;
+    try {
+      const customers = await LocalDB.getAll<any>('customers');
+      const pending = customers.filter(c => c.syncStatus === 'PENDING_UPLOAD' && (c.storeId === storeId || !c.storeId));
+
+      for (const c of pending) {
+        const { error } = await supabase.from('customers').upsert({
+          id: c.id,
+          store_id: c.storeId || storeId,
+          name: c.name,
+          phone: c.phone || null,
+          email: c.email || null,
+          address: c.address || null,
+          notes: c.notes || null,
+          loyalty_points: c.loyaltyPoints || 0,
+          total_spent: c.totalSpent || 0,
+          total_orders: c.totalOrders || 0,
+          is_active: c.active !== false
+        }, { onConflict: 'id' });
+
+        if (!error) {
+          c.syncStatus = 'SYNCED';
+          await LocalDB.put('customers', c);
+          count++;
+        }
+      }
+    } catch (_) {}
+    return count;
+  }
+
+  private async uploadPendingSales(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    let count = 0;
+
+    try {
+      const queue = StorageService.getOfflineQueue();
+      const pendingQueue = queue.filter(item => item.syncStatus !== 'synced');
+
+      for (const item of pendingQueue) {
+        const sale = item.sale;
+        try {
+          // Attempt atomic server RPC sync_process_sale first (Step 13)
+          let uploaded = false;
+          try {
+            const { data: rpcData, error: rpcErr } = await supabase.rpc('sync_process_sale', {
+              p_sale: {
+                id: sale.id && sale.id.length === 36 ? sale.id : undefined,
+                store_id: sale.storeId || storeId,
+                receipt_number: sale.receiptNumber,
+                customer_id: sale.customerId && sale.customerId.length === 36 ? sale.customerId : null,
+                cashier_id: null,
+                subtotal: sale.subtotal,
+                discount_total: sale.discountAmount || 0,
+                tax_total: sale.taxAmount || 0,
+                total: sale.total,
+                currency: '$',
+                status: 'completed',
+                is_offline: true,
+                client_created_at: sale.createdAt
+              },
+              p_items: (sale.items || []).map(it => ({
+                id: it.id && it.id.length === 36 ? it.id : undefined,
+                product_id: it.productId && it.productId.length === 36 ? it.productId : null,
+                product_name_snapshot: it.productName || 'Item',
+                quantity: it.quantity,
+                unit_price: it.unitPrice,
+                discount: it.discountAmount || 0,
+                tax: it.taxAmount || 0,
+                total: it.lineTotal,
+                created_at: sale.createdAt
+              })),
+              p_payments: (sale.payments || []).map(p => ({
+                id: p.id && p.id.length === 36 ? p.id : undefined,
+                method: p.method || 'cash',
+                amount: p.amount,
+                tendered: p.tendered || null,
+                change: p.change || null,
+                status: 'completed',
+                provider_reference: p.transactionReference || null,
+                created_at: p.createdAt || sale.createdAt
+              })),
+              p_movements: [],
+              p_client_event_id: `sale_event_${sale.id}`
+            });
+
+            if (!rpcErr && rpcData?.success) {
+              uploaded = true;
+              item.syncStatus = 'synced';
+              count++;
+            }
+          } catch (_) {
+            // Fall back to table upserts if RPC not present in environment
+          }
+
+          if (!uploaded) {
+            // Idempotent upsert of sale using immutable sale UUID (Section 3)
+            const { error: saleErr } = await supabase.from('sales').upsert({
+              id: sale.id.length === 36 ? sale.id : undefined,
+              store_id: sale.storeId || storeId,
+              receipt_number: sale.receiptNumber,
+              customer_id: sale.customerId && sale.customerId.length === 36 ? sale.customerId : null,
+              cashier_id: null,
+              subtotal: sale.subtotal,
+              discount_total: sale.discountAmount || 0,
+              tax_total: sale.taxAmount || 0,
+              total: sale.total,
+              currency: '$',
+              status: 'completed',
+              is_offline: true,
+              client_created_at: sale.createdAt
+            }, { onConflict: 'id' });
+
+            if (!saleErr) {
+              // Upsert line items idempotently with immutable UUID
+              if (Array.isArray(sale.items) && sale.items.length > 0) {
+                const itemRows = sale.items.map(it => ({
+                  id: it.id && it.id.length === 36 ? it.id : undefined,
+                  sale_id: sale.id,
+                  product_id: it.productId && it.productId.length === 36 ? it.productId : null,
+                  product_name_snapshot: it.productName || 'Item',
+                  quantity: it.quantity,
+                  unit_price: it.unitPrice,
+                  discount: it.discountAmount || 0,
+                  tax: it.taxAmount || 0,
+                  total: it.lineTotal,
+                  created_at: sale.createdAt
+                }));
+                await supabase.from('sale_items').upsert(itemRows, { onConflict: 'id' });
+              }
+
+              // Upsert payments idempotently with immutable UUID
+              if (Array.isArray(sale.payments) && sale.payments.length > 0) {
+                const paymentRows = sale.payments.map(p => ({
+                  id: p.id && p.id.length === 36 ? p.id : undefined,
+                  sale_id: sale.id,
+                  method: p.method || 'cash',
+                  amount: p.amount,
+                  tendered: p.tendered || null,
+                  change: p.change || null,
+                  status: 'completed',
+                  provider_reference: p.transactionReference || null,
+                  created_at: p.createdAt || sale.createdAt
+                }));
+                await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
+              }
+
+              item.syncStatus = 'synced';
+              count++;
+            }
+          }
+        } catch (_) {}
+      }
+
+      StorageService.saveOfflineQueue(queue.filter(item => item.syncStatus !== 'synced'));
+    } catch (_) {}
+
+    return count;
+  }
+
+  private async uploadPendingInventoryMovements(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    let count = 0;
+    try {
+      const movements = await LocalDB.getAll<any>('inventory_movements');
+      const pending = movements.filter(m => m.syncStatus === 'PENDING_UPLOAD' && (m.storeId === storeId || !m.storeId));
+
+      for (const m of pending) {
+        const { error } = await supabase.from('inventory_movements').upsert({
+          id: m.id.length === 36 ? m.id : undefined,
+          store_id: m.storeId || storeId,
+          product_id: m.productId,
+          type: m.type || 'sale',
+          quantity: m.quantity,
+          reference_type: m.referenceType || 'SALE',
+          reference_id: m.referenceId,
+          created_at: m.createdAt
+        }, { onConflict: 'id' });
+
+        if (!error) {
+          m.syncStatus = 'SYNCED';
+          await LocalDB.put('inventory_movements', m);
+          count++;
+        }
+      }
+    } catch (_) {}
+    return count;
+  }
+
+  private async uploadPendingCashShifts(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    let count = 0;
+    try {
+      const shifts = await LocalDB.getAll<any>('cash_shifts');
+      const pending = shifts.filter(s => s.syncStatus === 'PENDING_UPLOAD' && (s.storeId === storeId || !s.storeId));
+
+      for (const s of pending) {
+        const { error } = await supabase.from('cash_shifts').upsert({
+          id: s.id && s.id.length === 36 ? s.id : undefined,
+          store_id: s.storeId || storeId,
+          terminal_id: s.terminalId && s.terminalId.length === 36 ? s.terminalId : null,
+          user_id: s.userId && s.userId.length === 36 ? s.userId : null,
+          opening_amount: s.openingAmount,
+          closing_amount: s.closingAmount !== undefined ? s.closingAmount : null,
+          expected_amount: s.expectedAmount !== undefined ? s.expectedAmount : null,
+          difference: s.difference !== undefined ? s.difference : null,
+          status: s.status || 'open',
+          opened_at: s.openedAt,
+          closed_at: s.closedAt || null
+        }, { onConflict: 'id' });
+
+        if (!error) {
+          s.syncStatus = 'SYNCED';
+          await LocalDB.put('cash_shifts', s);
+          count++;
+        }
+      }
+    } catch (_) {}
+    return count;
+  }
+
+  private async uploadPendingCashMovements(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    let count = 0;
+    try {
+      const moves = await LocalDB.getAll<any>('cash_movements');
+      const pending = moves.filter(m => m.syncStatus === 'PENDING_UPLOAD');
+
+      for (const m of pending) {
+        const { error } = await supabase.from('cash_movements').upsert({
+          id: m.id && m.id.length === 36 ? m.id : undefined,
+          shift_id: m.shiftId,
+          type: m.type,
+          amount: m.amount,
+          reason: m.reason || null,
+          user_id: m.userId && m.userId.length === 36 ? m.userId : null,
+          created_at: m.createdAt
+        }, { onConflict: 'id' });
+
+        if (!error) {
+          m.syncStatus = 'SYNCED';
+          await LocalDB.put('cash_movements', m);
+          count++;
+        }
+      }
+    } catch (_) {}
+    return count;
+  }
+
+  // -------------------------------------------------------------
+  // Incremental Download Helpers (Sections 4, 5, 15, 18)
+  // -------------------------------------------------------------
+
+  private async downloadCategories(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const cursor = await this.getCursor('categories', storeId);
+      let query = supabase
+        .from('categories')
+        .select('*')
+        .eq('store_id', storeId)
+        .order('updated_at', { ascending: true });
+
+      if (cursor) {
+        query = query.gt('updated_at', cursor);
+      }
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        for (const cat of data) {
+          const isDeleted = Boolean(cat.deleted_at || cat.is_active === false);
+          await LocalDB.put('categories', {
+            id: cat.id,
+            storeId: cat.store_id,
+            name: cat.name || cat.icon,
+            iconName: cat.icon || 'Package',
+            color: cat.color || '#2563EB',
+            sortOrder: cat.sort_order || 0,
+            active: !isDeleted,
+            isDeleted,
+            syncStatus: 'SYNCED',
+            updatedAt: cat.updated_at
+          });
+        }
+        const latest = data[data.length - 1].updated_at;
+        if (latest) await this.saveCursor('categories', storeId, latest);
+        return data.length;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  private async downloadProducts(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const cursor = await this.getCursor('products', storeId);
+      let query = supabase
+        .from('products')
+        .select('*')
+        .eq('store_id', storeId)
+        .order('updated_at', { ascending: true });
+
+      if (cursor) {
+        query = query.gt('updated_at', cursor);
+      }
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        for (const p of data) {
+          const isDeleted = Boolean(p.deleted_at || p.is_active === false);
+          await LocalDB.put('products', {
+            id: p.id,
+            storeId: p.store_id,
+            categoryId: p.category_id || '',
+            name: p.name,
+            sku: p.sku || '',
+            barcode: p.barcode || '',
+            description: p.description || '',
+            price: Number(p.price),
+            cost: Number(p.cost || 0),
+            unit: p.unit || 'item',
+            trackInventory: p.track_inventory,
+            stock: Number(p.stock_minimum || 50),
+            lowStockThreshold: Number(p.stock_minimum || 10),
+            active: !isDeleted,
+            isDeleted,
+            isFavorite: p.is_favorite,
+            imageUrl: p.image_url,
+            syncStatus: 'SYNCED',
+            createdAt: p.created_at,
+            updatedAt: p.updated_at
+          });
+        }
+        const latest = data[data.length - 1].updated_at;
+        if (latest) await this.saveCursor('products', storeId, latest);
+        return data.length;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  private async downloadTaxes(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const cursor = await this.getCursor('taxes', storeId);
+      let query = supabase.from('taxes').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
+      if (cursor) query = query.gt('updated_at', cursor);
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        for (const t of data) {
+          await LocalDB.put('taxes', t);
+        }
+        const latest = data[data.length - 1].updated_at;
+        if (latest) await this.saveCursor('taxes', storeId, latest);
+        return data.length;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  private async downloadCustomers(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const cursor = await this.getCursor('customers', storeId);
+      let query = supabase.from('customers').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
+      if (cursor) query = query.gt('updated_at', cursor);
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        for (const c of data) {
+          await LocalDB.put('customers', {
+            id: c.id,
+            storeId: c.store_id,
+            name: c.name,
+            phone: c.phone || '',
+            email: c.email || '',
+            address: c.address || '',
+            notes: c.notes || '',
+            loyaltyPoints: c.loyalty_points || 0,
+            totalSpent: Number(c.total_spent || 0),
+            totalOrders: c.total_orders || 0,
+            active: c.is_active,
+            syncStatus: 'SYNCED',
+            createdAt: c.created_at,
+            updatedAt: c.updated_at
+          });
+        }
+        const latest = data[data.length - 1].updated_at;
+        if (latest) await this.saveCursor('customers', storeId, latest);
+        return data.length;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  private async downloadPrinters(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const cursor = await this.getCursor('printers', storeId);
+      let query = supabase.from('printers').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
+      if (cursor) query = query.gt('updated_at', cursor);
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        for (const pr of data) {
+          await LocalDB.put('printers', pr);
+        }
+        const latest = data[data.length - 1].updated_at;
+        if (latest) await this.saveCursor('printers', storeId, latest);
+        return data.length;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  private async downloadStoreSettings(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const { data, error } = await supabase.from('stores').select('*').eq('id', storeId).maybeSingle();
+      if (!error && data) {
+        await LocalDB.put('stores', data);
+        return 1;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  private async downloadUserProfiles(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const cursor = await this.getCursor('user_profiles', storeId);
+      let query = supabase.from('user_profiles').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
+      if (cursor) query = query.gt('updated_at', cursor);
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        for (const u of data) {
+          await LocalDB.put('user_profiles', u);
+        }
+        const latest = data[data.length - 1].updated_at;
+        if (latest) await this.saveCursor('user_profiles', storeId, latest);
+        return data.length;
+      }
+    } catch (_) {}
+    return 0;
+  }
+}
+
+export const SyncEngine = new SyncEngineClass();
+// Auto-start SyncEngine in browser / WebView runtime
+if (typeof window !== 'undefined') {
+  SyncEngine.start();
+}
