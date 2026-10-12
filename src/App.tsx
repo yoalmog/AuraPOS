@@ -17,6 +17,7 @@ import { ReportsView } from './components/reports/ReportsView.tsx';
 import { DiscountsView } from './components/discounts/DiscountsView.tsx';
 import { SettingsView } from './components/settings/SettingsView.tsx';
 import { MenuScannerView } from './components/menu-scanner/MenuScannerView.tsx';
+import { BackOfficeView } from './components/backoffice/BackOfficeView.tsx';
 import { AccessibilityLiveAnnouncer } from './components/common/AccessibilityLiveAnnouncer.tsx';
 
 const POSAppContent: React.FC = () => {
@@ -74,6 +75,7 @@ const POSAppContent: React.FC = () => {
           {activeRoute === 'reports' && <ReportsView />}
           {activeRoute === 'discounts' && <DiscountsView />}
           {activeRoute === 'settings' && <SettingsView />}
+          {activeRoute === 'backoffice' && <BackOfficeView />}
         </main>
       </div>
 

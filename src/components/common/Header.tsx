@@ -20,7 +20,8 @@ import {
   PanelLeftOpen,
   Globe,
   ExternalLink,
-  ArrowLeft
+  ArrowLeft,
+  Store
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n/translations.ts';
 
@@ -52,12 +53,16 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
     toggleMobileSidebar,
     language,
     setLanguage,
+    availableStores,
+    currentStoreId,
+    switchStore,
     t
   } = usePOS();
 
   const [showShortcuts, setShowShortcuts] = useState<boolean>(false);
   const [showEmployeeMenu, setShowEmployeeMenu] = useState<boolean>(false);
   const [showLanguageMenu, setShowLanguageMenu] = useState<boolean>(false);
+  const [showStoreMenu, setShowStoreMenu] = useState<boolean>(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
 
   // Close mobile search when route changes
@@ -89,6 +94,8 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
         return t('nav.discounts', 'Promotions & Discounts');
       case 'settings':
         return t('nav.settings', 'Store & System Settings');
+      case 'backoffice':
+        return 'Cloud Back Office HQ';
       default:
         return t('nav.pos', 'Point of Sale');
     }
@@ -362,6 +369,49 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
                   </span>
                 </div>
               </button>
+
+              {/* Multi-Store Location Switcher */}
+              {availableStores.length > 1 && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowStoreMenu(!showStoreMenu)}
+                    className="flex items-center gap-1.5 min-h-[40px] px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border border-[var(--theme-border)] bg-[var(--theme-surface)] hover:bg-[var(--theme-surface-variant)] text-[var(--theme-text-primary)] transition-all shrink-0 cursor-pointer"
+                    title="Active Store Location"
+                  >
+                    <Store className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span className="hidden xl:inline max-w-[120px] truncate">
+                      {availableStores.find(s => s.id === currentStoreId)?.name || 'Store'}
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 text-[var(--theme-text-secondary)]" />
+                  </button>
+
+                  {showStoreMenu && (
+                    <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-[var(--theme-surface)] border border-[var(--theme-border)] shadow-xl z-50 p-1.5 space-y-1">
+                      <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--theme-text-secondary)] border-b border-[var(--theme-border)]">
+                        Switch Store Location
+                      </div>
+                      {availableStores.map(st => (
+                        <button
+                          key={st.id}
+                          onClick={() => {
+                            switchStore(st.id);
+                            setShowStoreMenu(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer text-left ${
+                            st.id === currentStoreId
+                              ? 'bg-blue-500/10 text-blue-600 font-bold'
+                              : 'text-[var(--theme-text-primary)] hover:bg-[var(--theme-surface-variant)]'
+                          }`}
+                        >
+                          <span className="truncate">{st.name}</span>
+                          {st.id === currentStoreId && <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Keyboard Shortcuts Trigger (Desktop only) */}
               <button

@@ -21,7 +21,8 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Building2
 } from 'lucide-react';
 
 interface NavItem {
@@ -44,6 +45,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'reports', labelKey: 'nav.reports', defaultLabel: 'Reports', icon: BarChart3 },
   { id: 'discounts', labelKey: 'nav.discounts', defaultLabel: 'Discounts', icon: Tag },
   { id: 'settings', labelKey: 'nav.settings', defaultLabel: 'Settings', icon: Settings },
+  { id: 'backoffice', labelKey: 'nav.backOffice', defaultLabel: 'Back Office HQ', icon: Building2, badge: 'HQ' },
 ];
 
 export const Sidebar: React.FC = () => {

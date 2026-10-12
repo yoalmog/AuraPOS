@@ -40,6 +40,8 @@ import {
 import { ThemeColor, ThemePreset, getTheme, applyThemeVariables } from '../utils/theme.ts';
 import { ThemeService, SemanticColorTokens } from '../services/themeService.ts';
 import { AppearanceSettings } from '../types/pos.ts';
+import { StoreLocation } from '../types/backOffice.ts';
+import { BackOfficeService } from '../services/backOfficeService.ts';
 
 export type AppRoute =
   | 'pos'
@@ -53,7 +55,8 @@ export type AppRoute =
   | 'employees'
   | 'reports'
   | 'discounts'
-  | 'settings';
+  | 'settings'
+  | 'backoffice';
 
 export interface ToastMessage {
   id: string;
@@ -127,6 +130,11 @@ interface POSContextType {
   discounts: Discount[];
   taxConfigs: TaxConfig[];
   employees: Employee[];
+
+  // Multi-Store Management (Phase 5)
+  availableStores: StoreLocation[];
+  currentStoreId: string;
+  switchStore: (storeId: string) => Promise<void>;
 
   // Refresh
   refreshData: () => void;
@@ -419,6 +427,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [heldOrders, setHeldOrders] = useState<HeldOrder[]>(() => StorageService.getHeldOrders());
   const [discounts, setDiscounts] = useState<Discount[]>(() => StorageService.getDiscounts());
   const [taxConfigs, setTaxConfigs] = useState<TaxConfig[]>(() => StorageService.getTaxConfigs());
+
+  // Multi-Store Management (Phase 5)
+  const [availableStores, setAvailableStores] = useState<StoreLocation[]>([]);
+  const [currentStoreId, setCurrentStoreId] = useState<string>(() => settings.id || 'store_aura_main');
+
+  useEffect(() => {
+    BackOfficeService.getStores().then(st => setAvailableStores(st)).catch(() => {});
+  }, []);
 
   // Offline & Sync Engine (Phase 3 centralized sync)
   const [syncEngineStatus, setSyncEngineStatus] = useState<SyncEngineStatus>(() => SyncEngine.getStatus());
@@ -827,6 +843,28 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [showToast, refreshData, t]);
 
+  const switchStore = useCallback(async (storeId: string) => {
+    const target = availableStores.find(s => s.id === storeId);
+    if (!target) return;
+    setCurrentStoreId(storeId);
+    const updated: StoreSettings = {
+      ...settings,
+      id: target.id,
+      name: target.name,
+      address: target.address || settings.address,
+      currency: target.currency || settings.currency,
+      timezone: target.timezone || settings.timezone
+    };
+    StorageService.saveSettings(updated);
+    setSettings(updated);
+    refreshData();
+    showToast({
+      type: 'info',
+      title: 'Store Location Switched',
+      message: `Active register now set to "${target.name}".`
+    });
+  }, [availableStores, settings, refreshData, showToast]);
+
   const retryFailedSync = useCallback(async () => {
     setIsSyncing(true);
     try {
@@ -985,7 +1023,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resetAccessibility,
         announceAccessibility,
         triggerHaptic,
-        playAudioCue
+        playAudioCue,
+        availableStores,
+        currentStoreId,
+        switchStore
       }}
     >
       {children}
