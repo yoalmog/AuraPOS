@@ -11,8 +11,3 @@ coverage/
 android/.gradle/
 android/build/
 local.properties
-
-.gradle/
-android/.gradle/
-android/build/
-local.properties
