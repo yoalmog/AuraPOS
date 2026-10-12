@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { usePOS } from '../../context/POSContext.tsx';
 import { BackOfficeService } from '../../services/backOfficeService.ts';
+import { MultiStoreTransferService } from '../../services/multiStoreTransferService.ts';
+import { PromotionLoyaltyService, LOYALTY_TIERS } from '../../services/promotionLoyaltyService.ts';
+import { AccountingWebhookService } from '../../services/accountingWebhookService.ts';
+import { StorageService } from '../../services/storageService.ts';
 import {
   StoreLocation,
   TerminalDevice,
@@ -9,6 +13,12 @@ import {
   StaffMemberManagement,
   CashShiftSummary
 } from '../../types/backOffice.ts';
+import {
+  StockTransfer,
+  PromotionRule,
+  GeneralLedgerReport,
+  WebhookSubscription
+} from '../../types/advancedFeatures.ts';
 import {
   Building2,
   Store,
@@ -31,7 +41,14 @@ import {
   MapPin,
   ChevronDown,
   ArrowUpRight,
-  Sparkles
+  Sparkles,
+  ArrowLeftRight,
+  Award,
+  BookOpen,
+  Truck,
+  Send,
+  FileSpreadsheet,
+  X
 } from 'lucide-react';
 
 export const BackOfficeView: React.FC = () => {
@@ -46,11 +63,20 @@ export const BackOfficeView: React.FC = () => {
     switchStore,
     triggerSync,
     isSyncing,
+    products,
     t
   } = usePOS();
 
   // Navigation Tabs
-  type BackOfficeTab = 'overview' | 'inventory' | 'staff' | 'shifts' | 'locations';
+  type BackOfficeTab =
+    | 'overview'
+    | 'inventory'
+    | 'transfers'
+    | 'loyalty'
+    | 'accounting'
+    | 'staff'
+    | 'shifts'
+    | 'locations';
   const [activeTab, setActiveTab] = useState<BackOfficeTab>('overview');
 
   // Filters
@@ -65,6 +91,18 @@ export const BackOfficeView: React.FC = () => {
   const [staffList, setStaffList] = useState<StaffMemberManagement[]>([]);
   const [cashShifts, setCashShifts] = useState<CashShiftSummary[]>([]);
   const [terminals, setTerminals] = useState<TerminalDevice[]>([]);
+
+  // Phase 9 Advanced Multi-Store State
+  const [transfersList, setTransfersList] = useState<StockTransfer[]>([]);
+  const [promotionsList, setPromotionsList] = useState<PromotionRule[]>([]);
+  const [glReport, setGlReport] = useState<GeneralLedgerReport | null>(null);
+  const [webhookSubs, setWebhookSubs] = useState<WebhookSubscription[]>([]);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
+  const [transferSource, setTransferSource] = useState<string>('');
+  const [transferDest, setTransferDest] = useState<string>('');
+  const [transferProductId, setTransferProductId] = useState<string>('');
+  const [transferQty, setTransferQty] = useState<number>(10);
+  const [transferNotes, setTransferNotes] = useState<string>('');
 
   // Load back office data
   const loadData = async () => {
@@ -82,6 +120,18 @@ export const BackOfficeView: React.FC = () => {
       setStaffList(stf);
       setCashShifts(shf);
       setTerminals(trm);
+
+      // Load Phase 9 features
+      const trfs = StorageService.getStockTransfers();
+      setTransfersList(trfs);
+      const promos = StorageService.getPromotions();
+      setPromotionsList(promos);
+      const subs = StorageService.getWebhookSubscriptions();
+      setWebhookSubs(subs);
+
+      // Generate GL Report
+      const gl = AccountingWebhookService.generateGeneralLedgerReport();
+      setGlReport(gl);
     } catch (err: any) {
       showToast({
         type: 'error',
@@ -131,6 +181,144 @@ export const BackOfficeView: React.FC = () => {
         item.categoryName.toLowerCase().includes(q)
     );
   }, [globalInventory, searchQuery]);
+
+  // Phase 9 Handlers: Stock Transfers
+  const handleCreateTransfer = () => {
+    if (!transferSource || !transferDest || !transferProductId || transferQty <= 0) {
+      showToast({
+        type: 'warning',
+        title: 'Missing Fields',
+        message: 'Please choose source, destination, product, and positive quantity.'
+      });
+      return;
+    }
+    if (transferSource === transferDest) {
+      showToast({
+        type: 'warning',
+        title: 'Same Store Selected',
+        message: 'Source and destination branches must be different.'
+      });
+      return;
+    }
+    const sourceStore = availableStores.find(s => s.id === transferSource);
+    const destStore = availableStores.find(s => s.id === transferDest);
+    const prod = products.find(p => p.id === transferProductId);
+    if (!sourceStore || !destStore || !prod) {
+      showToast({
+        type: 'error',
+        title: 'Selection Error',
+        message: 'Invalid branch or item selected.'
+      });
+      return;
+    }
+
+    try {
+      const trf = MultiStoreTransferService.createTransfer({
+        sourceStoreId: sourceStore.id,
+        sourceStoreName: sourceStore.name,
+        destinationStoreId: destStore.id,
+        destinationStoreName: destStore.name,
+        items: [
+          {
+            productId: prod.id,
+            productName: prod.name,
+            sku: prod.sku,
+            quantity: transferQty,
+            unitCost: prod.costPrice || prod.price * 0.6
+          }
+        ],
+        notes: transferNotes || undefined
+      });
+      setTransfersList(StorageService.getStockTransfers());
+      setIsTransferModalOpen(false);
+      setTransferNotes('');
+      showToast({
+        type: 'success',
+        title: 'Transfer Requisition Created',
+        message: `${trf.transferNumber} created in Pending state.`
+      });
+    } catch (e: any) {
+      showToast({
+        type: 'error',
+        title: 'Transfer Failed',
+        message: e?.message || 'Could not create transfer'
+      });
+    }
+  };
+
+  const handleShipTransfer = (id: string) => {
+    try {
+      MultiStoreTransferService.shipTransfer(id, currentEmployee?.name || 'HQ Admin');
+      setTransfersList(StorageService.getStockTransfers());
+      showToast({
+        type: 'success',
+        title: 'Transfer Dispatched',
+        message: 'Stock deducted from source and status updated to In-Transit.'
+      });
+    } catch (e: any) {
+      showToast({ type: 'error', title: 'Dispatch Error', message: e?.message });
+    }
+  };
+
+  const handleReceiveTransfer = (id: string) => {
+    try {
+      MultiStoreTransferService.receiveTransfer(id, currentEmployee?.name || 'HQ Admin');
+      setTransfersList(StorageService.getStockTransfers());
+      showToast({
+        type: 'success',
+        title: 'Transfer Received',
+        message: 'Stock credited to destination inventory and transfer marked Received.'
+      });
+    } catch (e: any) {
+      showToast({ type: 'error', title: 'Receiving Error', message: e?.message });
+    }
+  };
+
+  const handleCancelTransfer = (id: string) => {
+    try {
+      MultiStoreTransferService.cancelTransfer(id, currentEmployee?.name || 'HQ Admin');
+      setTransfersList(StorageService.getStockTransfers());
+      showToast({
+        type: 'info',
+        title: 'Transfer Cancelled',
+        message: 'Transfer marked cancelled and any shipped inventory was restored.'
+      });
+    } catch (e: any) {
+      showToast({ type: 'error', title: 'Cancellation Error', message: e?.message });
+    }
+  };
+
+  // Phase 9 Handlers: General Ledger & Accounting Webhooks
+  const handleExportGlCsv = () => {
+    if (!glReport) return;
+    try {
+      AccountingWebhookService.exportGeneralLedgerCsv(glReport);
+      showToast({
+        type: 'success',
+        title: 'General Ledger Exported',
+        message: 'QuickBooks / Xero balanced journal CSV downloaded successfully.'
+      });
+    } catch (e: any) {
+      showToast({ type: 'error', title: 'Export Failed', message: e?.message });
+    }
+  };
+
+  const handleTestWebhook = async () => {
+    try {
+      const logs = await AccountingWebhookService.dispatchWebhook('sale.completed', {
+        testPing: true,
+        dispatchedAt: new Date().toISOString(),
+        storeId: currentStoreId
+      });
+      showToast({
+        type: 'success',
+        title: 'Webhook Dispatched',
+        message: `Successfully fired to ${logs.length} endpoint(s) with HMAC-SHA256 signature.`
+      });
+    } catch (e: any) {
+      showToast({ type: 'error', title: 'Webhook Error', message: e?.message });
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[var(--theme-surface)] overflow-y-auto">
@@ -222,6 +410,9 @@ export const BackOfficeView: React.FC = () => {
           {[
             { id: 'overview', label: 'Consolidated Analytics', icon: BarChart3 },
             { id: 'inventory', label: 'Global Inventory', icon: Layers, badge: globalInventory.filter(i => i.isLowStock).length || undefined },
+            { id: 'transfers', label: 'Stock Transfers', icon: ArrowLeftRight, badge: transfersList.filter(t => t.status === 'in_transit' || t.status === 'pending').length || undefined },
+            { id: 'loyalty', label: 'Loyalty & Promos', icon: Award },
+            { id: 'accounting', label: 'Accounting & Webhooks', icon: BookOpen },
             { id: 'staff', label: 'Staff & Roles (RBAC)', icon: Users },
             { id: 'shifts', label: 'Cash Shift Audits', icon: DollarSign },
             { id: 'locations', label: 'Store Locations', icon: Store }
@@ -702,7 +893,547 @@ export const BackOfficeView: React.FC = () => {
             })}
           </div>
         )}
+
+        {/* TAB 6: MULTI-STORE STOCK TRANSFERS */}
+        {activeTab === 'transfers' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[var(--theme-surface-variant)] p-4 rounded-2xl border border-[var(--theme-border)]">
+              <div>
+                <h3 className="text-base font-bold text-[var(--theme-text-primary)] flex items-center gap-2">
+                  <ArrowLeftRight className="w-5 h-5 text-blue-600" />
+                  <span>Inter-Branch Stock Transfers</span>
+                </h3>
+                <p className="text-xs text-[var(--theme-text-secondary)] mt-0.5">
+                  Requisition, dispatch shipping, and receipt confirmation across branches with automatic inventory ledgers.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  if (availableStores.length >= 2) {
+                    setTransferSource(availableStores[0].id);
+                    setTransferDest(availableStores[1].id);
+                  }
+                  if (products.length > 0) {
+                    setTransferProductId(products[0].id);
+                  }
+                  setIsTransferModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+              >
+                <Plus className="w-4 h-4" />
+                <span>New Transfer Requisition</span>
+              </button>
+            </div>
+
+            {/* Transfers List Table */}
+            <div className="theme-surface rounded-2xl border border-[var(--theme-border)] overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--theme-surface-variant)] border-b border-[var(--theme-border)] text-[var(--theme-text-secondary)] uppercase font-semibold text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Transfer #</th>
+                      <th className="py-3 px-4">Route</th>
+                      <th className="py-3 px-4">Items / SKU</th>
+                      <th className="py-3 px-4 text-center">Units</th>
+                      <th className="py-3 px-4 text-right">Cost Value</th>
+                      <th className="py-3 px-4 text-center">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--theme-border)]">
+                    {transfersList.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-xs text-[var(--theme-text-secondary)]">
+                          No stock transfers recorded. Click "New Transfer Requisition" to create one.
+                        </td>
+                      </tr>
+                    ) : (
+                      transfersList.map(trf => (
+                        <tr key={trf.id} className="hover:bg-[var(--theme-surface-variant)]/50 transition-colors">
+                          <td className="py-3.5 px-4 font-mono font-bold text-[var(--theme-text-primary)]">
+                            {trf.transferNumber}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-1.5 font-medium text-[var(--theme-text-primary)]">
+                              <span>{trf.sourceStoreName}</span>
+                              <span className="text-[var(--theme-text-secondary)]">&rarr;</span>
+                              <span>{trf.destinationStoreName}</span>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            {trf.items.map(it => (
+                              <div key={it.productId} className="text-[11px] text-[var(--theme-text-secondary)]">
+                                {it.productName} ({it.sku})
+                              </div>
+                            ))}
+                          </td>
+                          <td className="py-3.5 px-4 text-center font-mono font-bold text-[var(--theme-text-primary)]">
+                            {trf.totalUnits}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-[var(--theme-text-primary)]">
+                            {formatCurrency(trf.totalCostValue)}
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase inline-flex items-center gap-1 ${
+                                trf.status === 'received'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                  : trf.status === 'in_transit'
+                                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
+                                  : trf.status === 'pending'
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                                  : 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300'
+                              }`}
+                            >
+                              {trf.status === 'in_transit' && <Truck className="w-3 h-3" />}
+                              {trf.status === 'received' && <CheckCircle2 className="w-3 h-3" />}
+                              <span>{trf.status.replace('_', ' ')}</span>
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {trf.status === 'pending' && (
+                                <>
+                                  <button
+                                    onClick={() => handleShipTransfer(trf.id)}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                                  >
+                                    Ship
+                                  </button>
+                                  <button
+                                    onClick={() => handleCancelTransfer(trf.id)}
+                                    className="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 font-bold text-[11px] transition-colors cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+                              {trf.status === 'in_transit' && (
+                                <>
+                                  <button
+                                    onClick={() => handleReceiveTransfer(trf.id)}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                                  >
+                                    Receive
+                                  </button>
+                                  <button
+                                    onClick={() => handleCancelTransfer(trf.id)}
+                                    className="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 font-bold text-[11px] transition-colors cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+                              {trf.status === 'received' && (
+                                <span className="text-[11px] text-emerald-600 font-bold">Closed</span>
+                              )}
+                              {trf.status === 'cancelled' && (
+                                <span className="text-[11px] text-slate-400 font-bold">Cancelled</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 7: LOYALTY & PROMOTIONAL CAMPAIGNS */}
+        {activeTab === 'loyalty' && (
+          <div className="space-y-6">
+            {/* Section 1: Loyalty Tier Progression Cards */}
+            <div>
+              <div className="mb-4">
+                <h3 className="text-base font-bold text-[var(--theme-text-primary)] flex items-center gap-2">
+                  <Award className="w-5 h-5 text-amber-500" />
+                  <span>Customer Loyalty Tier Architecture</span>
+                </h3>
+                <p className="text-xs text-[var(--theme-text-secondary)] mt-0.5">
+                  Automated customer tier progression based on lifetime spend with point multipliers and ticket discounts.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Object.values(LOYALTY_TIERS).map(tier => (
+                  <div
+                    key={tier.level}
+                    className="p-5 rounded-2xl border border-[var(--theme-border)] theme-surface space-y-3 relative overflow-hidden"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                        {tier.level}
+                      </span>
+                      <span className="text-xs font-mono font-bold text-[var(--theme-text-primary)]">
+                        {tier.pointMultiplier}x Pts
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="text-base font-bold text-[var(--theme-text-primary)]">{tier.name}</h4>
+                      <p className="text-xs text-[var(--theme-text-secondary)]">
+                        Min Spend: <span className="font-mono font-bold text-[var(--theme-text-primary)]">{formatCurrency(tier.minLifetimeSpend)}</span>
+                      </p>
+                    </div>
+
+                    <div className="pt-2 border-t border-[var(--theme-border)] space-y-1">
+                      <div className="text-[11px] font-bold text-emerald-600">
+                        {tier.discountPercentage > 0 ? `${tier.discountPercentage}% Automatic Discount` : 'Standard Pricing'}
+                      </div>
+                      <ul className="text-[11px] text-[var(--theme-text-secondary)] space-y-0.5">
+                        {tier.perks.map((p, idx) => (
+                          <li key={idx} className="flex items-center gap-1.5">
+                            <span className="text-blue-500">&bull;</span>
+                            <span>{p}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Section 2: Active Promotional Rules */}
+            <div className="theme-surface rounded-2xl border border-[var(--theme-border)] p-5 space-y-4 shadow-xs">
+              <div>
+                <h4 className="text-sm font-bold text-[var(--theme-text-primary)] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-500" />
+                  <span>Active Promotional Campaigns</span>
+                </h4>
+                <p className="text-xs text-[var(--theme-text-secondary)] mt-0.5">
+                  Configured coupon codes and automatic checkout basket discounts.
+                </p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--theme-surface-variant)] border-b border-[var(--theme-border)] text-[var(--theme-text-secondary)] uppercase font-semibold text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-3">Campaign Name</th>
+                      <th className="py-2.5 px-3">Type</th>
+                      <th className="py-2.5 px-3 text-right">Value</th>
+                      <th className="py-2.5 px-3 text-right">Min Spend</th>
+                      <th className="py-2.5 px-3 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--theme-border)]">
+                    {promotionsList.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-xs text-[var(--theme-text-secondary)]">
+                          No active promotional rules found.
+                        </td>
+                      </tr>
+                    ) : (
+                      promotionsList.map(pr => (
+                        <tr key={pr.id}>
+                          <td className="py-2.5 px-3 font-medium text-[var(--theme-text-primary)]">
+                            {pr.name}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500 uppercase font-mono text-[10px]">
+                            {pr.type}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-[var(--theme-text-primary)]">
+                            {pr.type === 'percentage' ? `${pr.value}%` : formatCurrency(pr.value)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-[var(--theme-text-secondary)]">
+                            {pr.minSpend ? formatCurrency(pr.minSpend) : 'None'}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                              Active
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 8: ACCOUNTING & WEBHOOKS */}
+        {activeTab === 'accounting' && (
+          <div className="space-y-6">
+            {/* General Ledger Header & Balanced Verification */}
+            <div className="bg-[var(--theme-surface-variant)] p-5 rounded-2xl border border-[var(--theme-border)] flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-[var(--theme-text-primary)] flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-indigo-600" />
+                    <span>General Ledger & Double-Entry Accounting</span>
+                  </h3>
+                  {glReport?.isBalanced && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      Balanced (Debits === Credits)
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-[var(--theme-text-secondary)]">
+                  Standard Chart of Accounts (Cash, Card, Gross Revenue, Sales Tax, COGS, Inventory) ready for external sync.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <div className="text-[10px] text-[var(--theme-text-secondary)] uppercase">Total Ledger Volume</div>
+                  <div className="text-sm font-mono font-bold text-[var(--theme-text-primary)]">
+                    {formatCurrency(glReport?.totalDebits || 0)}
+                  </div>
+                </div>
+                <button
+                  onClick={handleExportGlCsv}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Download QuickBooks/Xero CSV</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Journal Entries Preview */}
+            <div className="theme-surface rounded-2xl border border-[var(--theme-border)] overflow-hidden shadow-xs">
+              <div className="p-4 border-b border-[var(--theme-border)] flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--theme-text-secondary)]">
+                  Journal Entries ({glReport?.entries.length || 0})
+                </h4>
+                <span className="text-[11px] font-mono text-[var(--theme-text-secondary)]">
+                  Debits: {formatCurrency(glReport?.totalDebits || 0)} | Credits: {formatCurrency(glReport?.totalCredits || 0)}
+                </span>
+              </div>
+              <div className="overflow-x-auto max-h-96">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--theme-surface-variant)] border-b border-[var(--theme-border)] text-[var(--theme-text-secondary)] uppercase font-semibold text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-4">Entry #</th>
+                      <th className="py-2.5 px-4">Date</th>
+                      <th className="py-2.5 px-4">Account Code</th>
+                      <th className="py-2.5 px-4">Account Name</th>
+                      <th className="py-2.5 px-4 text-right">Debit</th>
+                      <th className="py-2.5 px-4 text-right">Credit</th>
+                      <th className="py-2.5 px-4">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--theme-border)]">
+                    {!glReport || glReport.entries.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-xs text-[var(--theme-text-secondary)]">
+                          No accounting ledger entries generated yet. Complete sales to populate double-entry ledger.
+                        </td>
+                      </tr>
+                    ) : (
+                      glReport.entries.slice(0, 30).map((en, idx) => (
+                        <tr key={idx} className="hover:bg-[var(--theme-surface-variant)]/50">
+                          <td className="py-2.5 px-4 font-mono font-bold text-[var(--theme-text-primary)]">
+                            {en.entryNumber}
+                          </td>
+                          <td className="py-2.5 px-4 text-[var(--theme-text-secondary)]">
+                            {formatDate(en.date)}
+                          </td>
+                          <td className="py-2.5 px-4 font-mono font-semibold text-indigo-600">
+                            {en.accountCode}
+                          </td>
+                          <td className="py-2.5 px-4 font-medium text-[var(--theme-text-primary)]">
+                            {en.accountName}
+                          </td>
+                          <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-600">
+                            {en.debit > 0 ? formatCurrency(en.debit) : '—'}
+                          </td>
+                          <td className="py-2.5 px-4 text-right font-mono font-bold text-blue-600">
+                            {en.credit > 0 ? formatCurrency(en.credit) : '—'}
+                          </td>
+                          <td className="py-2.5 px-4 text-[var(--theme-text-secondary)] truncate max-w-xs">
+                            {en.description}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* External Webhooks Configuration */}
+            <div className="theme-surface rounded-2xl border border-[var(--theme-border)] p-5 space-y-4 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-bold text-[var(--theme-text-primary)] flex items-center gap-2">
+                    <Send className="w-4 h-4 text-emerald-600" />
+                    <span>Outbound Accounting Webhooks</span>
+                  </h4>
+                  <p className="text-xs text-[var(--theme-text-secondary)] mt-0.5">
+                    HMAC-SHA256 authenticated HTTP POST events for ERPs, QuickBooks, and warehouse dispatchers.
+                  </p>
+                </div>
+                <button
+                  onClick={handleTestWebhook}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--theme-border)] hover:bg-[var(--theme-surface-variant)] text-xs font-bold text-[var(--theme-text-primary)] transition-colors cursor-pointer self-start sm:self-auto"
+                >
+                  <Send className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Send Test Ping Webhook</span>
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {webhookSubs.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-[var(--theme-surface-variant)] text-xs text-[var(--theme-text-secondary)] text-center">
+                    No external webhook subscriptions configured. Default audit listeners active.
+                  </div>
+                ) : (
+                  webhookSubs.map(sub => (
+                    <div
+                      key={sub.id}
+                      className="p-3.5 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-surface-variant)]/50 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div>
+                        <div className="font-bold text-[var(--theme-text-primary)]">{sub.name}</div>
+                        <div className="text-[11px] font-mono text-[var(--theme-text-secondary)] truncate max-w-md">
+                          {sub.targetUrl}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-600 font-mono">
+                          HMAC-SHA256
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                          Active
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* MODAL: NEW STOCK TRANSFER REQUISITION */}
+      {isTransferModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-[var(--theme-surface)] border border-[var(--theme-border)] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[var(--theme-border)] pb-3">
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight className="w-5 h-5 text-blue-600" />
+                <h3 className="text-base font-bold text-[var(--theme-text-primary)]">
+                  New Inter-Branch Transfer
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsTransferModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-[var(--theme-surface-variant)] text-[var(--theme-text-secondary)] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              {/* Source Store */}
+              <div>
+                <label className="block font-semibold text-[var(--theme-text-secondary)] mb-1">
+                  Source Store (Origin)
+                </label>
+                <select
+                  value={transferSource}
+                  onChange={e => setTransferSource(e.target.value)}
+                  className="w-full bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl p-2.5 text-[var(--theme-text-primary)] font-medium cursor-pointer"
+                >
+                  {availableStores.map(st => (
+                    <option key={st.id} value={st.id}>
+                      {st.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Destination Store */}
+              <div>
+                <label className="block font-semibold text-[var(--theme-text-secondary)] mb-1">
+                  Destination Store (Target)
+                </label>
+                <select
+                  value={transferDest}
+                  onChange={e => setTransferDest(e.target.value)}
+                  className="w-full bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl p-2.5 text-[var(--theme-text-primary)] font-medium cursor-pointer"
+                >
+                  {availableStores.map(st => (
+                    <option key={st.id} value={st.id}>
+                      {st.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Product */}
+              <div>
+                <label className="block font-semibold text-[var(--theme-text-secondary)] mb-1">
+                  Product to Transfer
+                </label>
+                <select
+                  value={transferProductId}
+                  onChange={e => setTransferProductId(e.target.value)}
+                  className="w-full bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl p-2.5 text-[var(--theme-text-primary)] font-medium cursor-pointer"
+                >
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.sku}) &bull; In stock: {p.stock}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Quantity */}
+              <div>
+                <label className="block font-semibold text-[var(--theme-text-secondary)] mb-1">
+                  Transfer Quantity (Units)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={transferQty}
+                  onChange={e => setTransferQty(parseInt(e.target.value) || 1)}
+                  className="w-full bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl p-2.5 text-[var(--theme-text-primary)] font-mono font-bold"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block font-semibold text-[var(--theme-text-secondary)] mb-1">
+                  Requisition Notes (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Urgent weekend restock"
+                  value={transferNotes}
+                  onChange={e => setTransferNotes(e.target.value)}
+                  className="w-full bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl p-2.5 text-[var(--theme-text-primary)]"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--theme-border)]">
+              <button
+                onClick={() => setIsTransferModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[var(--theme-text-secondary)] hover:bg-[var(--theme-surface-variant)] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateTransfer}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer shadow-xs"
+              >
+                Submit Requisition
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
