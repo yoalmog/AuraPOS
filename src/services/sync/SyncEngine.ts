@@ -2,7 +2,8 @@ import { supabase, isSupabaseConfigured } from '../supabase/supabaseClient.ts';
 import { LocalDB } from '../db/localDatabase.ts';
 import { StorageService } from '../storageService.ts';
 import { NativeBridgeService } from '../native/NativeBridgeService.ts';
-import { SyncErrorClassifier } from './SyncErrorClassifier.ts';
+import { SyncErrorClassifier, ClassifiedSyncError } from './SyncErrorClassifier.ts';
+import { Product, Category, Customer, Employee, StoreSettings, TaxConfig } from '../../types/pos.ts';
 
 export type SyncConnectionState = 'ONLINE' | 'OFFLINE' | 'CONNECTING' | 'SYNCING' | 'SYNC_ERROR';
 
@@ -15,6 +16,7 @@ export interface SyncEngineStatus {
   pendingDownloads: number;
   failedEventsCount: number;
   currentOperation: string;
+  lastError?: ClassifiedSyncError | null;
 }
 
 export interface FailedSyncEvent {
@@ -36,6 +38,9 @@ export interface FailedSyncEvent {
  * - Safe idempotency via client_event_id
  * - Sync checkpoints and cursors for incremental downloads
  * - Automatic execution upon network reconnect + manual Sync Now
+ * - Real PL/pgSQL RPC integration (sync_pull_changes, sync_process_sale)
+ * - Two-way local storage & reactive UI cache synchronization
+ * - Tombstone handling and timestamp-based Last-Write-Wins (LWW) conflict resolution
  */
 class SyncEngineClass {
   private isRunning = false;
@@ -43,11 +48,16 @@ class SyncEngineClass {
   private syncTimer: any = null;
   private lastSuccessfulSync: string | null = null;
   private lastSyncAttempt: string | null = null;
+  private lastError: ClassifiedSyncError | null = null;
   private currentOp = 'Idle';
   private listeners = new Set<(status: SyncEngineStatus) => void>();
 
   constructor() {
-    this.lastSuccessfulSync = localStorage.getItem('aurapos_last_sync_success');
+    try {
+      this.lastSuccessfulSync = typeof localStorage !== 'undefined' ? localStorage.getItem('aurapos_last_sync_success') : null;
+    } catch {
+      this.lastSuccessfulSync = null;
+    }
   }
 
   start(): void {
@@ -120,6 +130,8 @@ class SyncEngineClass {
 
     if (this.isSyncing) {
       state = 'SYNCING';
+    } else if (this.lastError && online) {
+      state = 'SYNC_ERROR';
     }
 
     return {
@@ -130,7 +142,8 @@ class SyncEngineClass {
       pendingUploads: this.getPendingCountSync(),
       pendingDownloads: 0,
       failedEventsCount: 0,
-      currentOperation: this.currentOp
+      currentOperation: this.currentOp,
+      lastError: this.lastError
     };
   }
 
@@ -263,7 +276,7 @@ class SyncEngineClass {
         // Step 1: Upload offline customers
         uploadedCount += await this.uploadPendingCustomers(storeId);
 
-        // Step 2: Upload offline sales, sale_items & payments with idempotency
+        // Step 2: Upload offline sales, sale_items & payments with idempotency & inventory movements
         uploadedCount += await this.uploadPendingSales(storeId);
 
         // Step 3: Upload offline inventory movements
@@ -277,37 +290,46 @@ class SyncEngineClass {
         this.currentOp = 'Downloading master data updates...';
         this.notify();
 
-        // Step 1: Categories & Category Translations (incremental via cursor)
-        downloadedCount += await this.downloadCategories(storeId);
-
-        // Step 2: Products & Variants & Translations (incremental via cursor)
-        downloadedCount += await this.downloadProducts(storeId);
-
-        // Step 3: Taxes (incremental via cursor)
-        downloadedCount += await this.downloadTaxes(storeId);
-
-        // Step 4: Customers (incremental via cursor)
-        downloadedCount += await this.downloadCustomers(storeId);
-
-        // Step 5: Printers (incremental via cursor)
-        downloadedCount += await this.downloadPrinters(storeId);
-
-        // Step 6: Store Settings
+        // Step 1: Store Settings
         downloadedCount += await this.downloadStoreSettings(storeId);
 
-        // Step 7: User Profiles & Roles (incremental via cursor)
+        // Step 2: Taxes (incremental via cursor)
+        downloadedCount += await this.downloadTaxes(storeId);
+
+        // Step 3: Categories & Category Translations (incremental via cursor)
+        downloadedCount += await this.downloadCategories(storeId);
+
+        // Step 4: Inventory balances (ledger snapshot to update stock projections)
+        downloadedCount += await this.downloadInventory(storeId);
+
+        // Step 5: Products & Variants & Translations (incremental via cursor)
+        downloadedCount += await this.downloadProducts(storeId);
+
+        // Step 6: Customers (incremental via cursor)
+        downloadedCount += await this.downloadCustomers(storeId);
+
+        // Step 7: Printers (incremental via cursor)
+        downloadedCount += await this.downloadPrinters(storeId);
+
+        // Step 8: User Profiles & Roles (incremental via cursor)
         downloadedCount += await this.downloadUserProfiles(storeId);
       }
 
       // 3. Mark successful sync
       this.lastSuccessfulSync = new Date().toISOString();
-      localStorage.setItem('aurapos_last_sync_success', this.lastSuccessfulSync);
+      this.lastError = null;
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('aurapos_last_sync_success', this.lastSuccessfulSync);
+        }
+      } catch (_) {}
       this.currentOp = 'Idle';
       this.notify();
 
       return { success: true, uploaded: uploadedCount, downloaded: downloadedCount };
     } catch (err: any) {
       const classified = SyncErrorClassifier.classify(err);
+      this.lastError = classified;
       console.warn(`[SyncEngine] Synchronization cycle error [${classified.type}] (retryable=${classified.retryable}):`, classified.message);
       this.currentOp = `Sync error: ${classified.message}`;
       this.notify();
@@ -342,6 +364,58 @@ class SyncEngineClass {
         updatedAt: new Date().toISOString()
       });
     } catch (_) {}
+  }
+
+  /**
+   * Dedicated Incremental Pull helper.
+   * Invokes the PL/pgSQL sync_pull_changes RPC function first,
+   * falling back cleanly to PostgREST queries if unauthenticated or RPC not present.
+   */
+  private async pullEntityChanges(
+    entityType: string,
+    storeId: string,
+    cursor: string | null
+  ): Promise<any[] | null> {
+    if (!supabase) return null;
+
+    // 1. Attempt server RPC sync_pull_changes (SECURITY DEFINER with validation)
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('sync_pull_changes', {
+        p_store_id: storeId,
+        p_entity_type: entityType,
+        p_cursor: cursor || undefined
+      });
+
+      if (!rpcErr && Array.isArray(rpcData)) {
+        // PostgREST returns rows; unpack TABLE (data JSONB)
+        return rpcData.map((row: any) => (row && typeof row === 'object' && 'data' in row ? row.data : row));
+      }
+    } catch (_) {
+      // Fall through to PostgREST table fallback
+    }
+
+    // 2. Direct PostgREST query fallback
+    try {
+      const targetTable = entityType === 'store_settings' ? 'stores' : entityType;
+      let query = supabase.from(targetTable).select('*');
+      if (entityType === 'store_settings') {
+        query = query.eq('id', storeId);
+      } else {
+        query = query.eq('store_id', storeId);
+      }
+
+      if (cursor) {
+        query = query.gt('updated_at', cursor);
+      }
+      query = query.order('updated_at', { ascending: true });
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        return data;
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   // -------------------------------------------------------------
@@ -385,14 +459,43 @@ class SyncEngineClass {
     let count = 0;
 
     try {
+      // 1. Gather pending sales from both StorageService queue and LocalDB
       const queue = StorageService.getOfflineQueue();
-      const pendingQueue = queue.filter(item => item.syncStatus !== 'synced');
+      let localSales: any[] = [];
+      try {
+        localSales = await LocalDB.getAll<any>('sales');
+      } catch (_) {}
+      const pendingLocalSales = localSales.filter(s => s.syncStatus === 'PENDING_UPLOAD');
 
-      for (const item of pendingQueue) {
-        const sale = item.sale;
+      // Deduplicate pending sales by ID
+      const salesMap = new Map<string, { sale: any; queueItem: any }>();
+      queue.filter(item => item.syncStatus !== 'synced').forEach(item => {
+        if (item.sale?.id) salesMap.set(item.sale.id, { sale: item.sale, queueItem: item });
+      });
+      pendingLocalSales.forEach(s => {
+        if (s.id && !salesMap.has(s.id)) {
+          salesMap.set(s.id, { sale: s, queueItem: null });
+        }
+      });
+
+      for (const { sale, queueItem } of salesMap.values()) {
         try {
-          // Attempt atomic server RPC sync_process_sale first (Step 13)
+          // Generate inventory movements (deduction) for each tracked line item
+          const movements = (sale.items || [])
+            .filter((it: any) => it.productId && it.productId.length === 36)
+            .map((it: any) => ({
+              id: undefined,
+              product_id: it.productId,
+              type: 'sale',
+              quantity: -Math.abs(Number(it.quantity || 1)),
+              reference_type: 'SALE',
+              reference_id: sale.id,
+              created_at: sale.createdAt
+            }));
+
           let uploaded = false;
+
+          // Attempt atomic server RPC sync_process_sale first (Step 13)
           try {
             const { data: rpcData, error: rpcErr } = await supabase.rpc('sync_process_sale', {
               p_sale: {
@@ -410,7 +513,7 @@ class SyncEngineClass {
                 is_offline: true,
                 client_created_at: sale.createdAt
               },
-              p_items: (sale.items || []).map(it => ({
+              p_items: (sale.items || []).map((it: any) => ({
                 id: it.id && it.id.length === 36 ? it.id : undefined,
                 product_id: it.productId && it.productId.length === 36 ? it.productId : null,
                 product_name_snapshot: it.productName || 'Item',
@@ -421,7 +524,7 @@ class SyncEngineClass {
                 total: it.lineTotal,
                 created_at: sale.createdAt
               })),
-              p_payments: (sale.payments || []).map(p => ({
+              p_payments: (sale.payments || []).map((p: any) => ({
                 id: p.id && p.id.length === 36 ? p.id : undefined,
                 method: p.method || 'cash',
                 amount: p.amount,
@@ -431,14 +534,18 @@ class SyncEngineClass {
                 provider_reference: p.transactionReference || null,
                 created_at: p.createdAt || sale.createdAt
               })),
-              p_movements: [],
+              p_movements: movements,
               p_client_event_id: `sale_event_${sale.id}`
             });
 
             if (!rpcErr && rpcData?.success) {
               uploaded = true;
-              item.syncStatus = 'synced';
-              count++;
+            } else if (rpcErr) {
+              const classified = SyncErrorClassifier.classify(rpcErr);
+              if (classified.type === 'DUPLICATE_EVENT') {
+                // Idempotently already on server
+                uploaded = true;
+              }
             }
           } catch (_) {
             // Fall back to table upserts if RPC not present in environment
@@ -447,7 +554,7 @@ class SyncEngineClass {
           if (!uploaded) {
             // Idempotent upsert of sale using immutable sale UUID (Section 3)
             const { error: saleErr } = await supabase.from('sales').upsert({
-              id: sale.id.length === 36 ? sale.id : undefined,
+              id: sale.id && sale.id.length === 36 ? sale.id : undefined,
               store_id: sale.storeId || storeId,
               receipt_number: sale.receiptNumber,
               customer_id: sale.customerId && sale.customerId.length === 36 ? sale.customerId : null,
@@ -463,9 +570,9 @@ class SyncEngineClass {
             }, { onConflict: 'id' });
 
             if (!saleErr) {
-              // Upsert line items idempotently with immutable UUID
+              // Upsert line items idempotently
               if (Array.isArray(sale.items) && sale.items.length > 0) {
-                const itemRows = sale.items.map(it => ({
+                const itemRows = sale.items.map((it: any) => ({
                   id: it.id && it.id.length === 36 ? it.id : undefined,
                   sale_id: sale.id,
                   product_id: it.productId && it.productId.length === 36 ? it.productId : null,
@@ -480,9 +587,9 @@ class SyncEngineClass {
                 await supabase.from('sale_items').upsert(itemRows, { onConflict: 'id' });
               }
 
-              // Upsert payments idempotently with immutable UUID
+              // Upsert payments idempotently
               if (Array.isArray(sale.payments) && sale.payments.length > 0) {
-                const paymentRows = sale.payments.map(p => ({
+                const paymentRows = sale.payments.map((p: any) => ({
                   id: p.id && p.id.length === 36 ? p.id : undefined,
                   sale_id: sale.id,
                   method: p.method || 'cash',
@@ -496,9 +603,37 @@ class SyncEngineClass {
                 await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
               }
 
-              item.syncStatus = 'synced';
-              count++;
+              uploaded = true;
             }
+          }
+
+          if (uploaded) {
+            count++;
+            if (queueItem) {
+              queueItem.syncStatus = 'synced';
+            }
+            // Mark sale as synced in LocalDB
+            sale.syncStatus = 'SYNCED';
+            await LocalDB.put('sales', sale);
+
+            // Mark matching sync_events and inventory movements as synced
+            try {
+              const events = await LocalDB.getAll<any>('sync_events');
+              for (const ev of events) {
+                if (ev.clientEventId === `sale_event_${sale.id}` || ev.entityId === sale.id) {
+                  ev.status = 'COMPLETED';
+                  await LocalDB.put('sync_events', ev);
+                }
+              }
+
+              const movementsList = await LocalDB.getAll<any>('inventory_movements');
+              for (const m of movementsList) {
+                if (m.referenceId === sale.id) {
+                  m.syncStatus = 'SYNCED';
+                  await LocalDB.put('inventory_movements', m);
+                }
+              }
+            } catch (_) {}
           }
         } catch (_) {}
       }
@@ -606,8 +741,60 @@ class SyncEngineClass {
     if (!supabase) return 0;
     try {
       const cursor = await this.getCursor('categories', storeId);
+      const data = await this.pullEntityChanges('categories', storeId, cursor);
+
+      if (Array.isArray(data) && data.length > 0) {
+        const currentCats = StorageService.getCategories();
+        const catMap = new Map<string, Category>();
+        currentCats.forEach(c => catMap.set(c.id, c));
+
+        for (const cat of data) {
+          const isDeleted = Boolean(cat.deleted_at || cat.is_active === false);
+          const existing = catMap.get(cat.id);
+
+          // Timestamp-based Last-Write-Wins (LWW) conflict resolution
+          if (existing && (existing as any).syncStatus === 'PENDING_UPLOAD' && existing.updatedAt && cat.updated_at) {
+            if (new Date(existing.updatedAt).getTime() > new Date(cat.updated_at).getTime()) {
+              continue;
+            }
+          }
+
+          const catRecord: Category = {
+            id: cat.id,
+            storeId: cat.store_id,
+            name: cat.name || cat.icon,
+            iconName: cat.icon || 'Package',
+            color: cat.color || '#2563EB',
+            sortOrder: cat.sort_order || 0,
+            active: !isDeleted,
+            updatedAt: cat.updated_at
+          };
+
+          await LocalDB.put('categories', { ...catRecord, isDeleted, syncStatus: 'SYNCED' });
+          catMap.set(cat.id, catRecord);
+        }
+
+        // Mirror directly to StorageService so UI immediately reflects cloud master data
+        StorageService.saveCategories(Array.from(catMap.values()));
+
+        const latest = data[data.length - 1].updated_at;
+        if (latest) await this.saveCursor('categories', storeId, latest);
+        return data.length;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  /**
+   * Syncs actual stock quantities from the cloud inventory ledger table
+   * into local database and updates reactive product stock models.
+   */
+  private async downloadInventory(storeId: string): Promise<number> {
+    if (!supabase) return 0;
+    try {
+      const cursor = await this.getCursor('inventory', storeId);
       let query = supabase
-        .from('categories')
+        .from('inventory')
         .select('*')
         .eq('store_id', storeId)
         .order('updated_at', { ascending: true });
@@ -618,23 +805,41 @@ class SyncEngineClass {
 
       const { data, error } = await query;
       if (!error && Array.isArray(data) && data.length > 0) {
-        for (const cat of data) {
-          const isDeleted = Boolean(cat.deleted_at || cat.is_active === false);
-          await LocalDB.put('categories', {
-            id: cat.id,
-            storeId: cat.store_id,
-            name: cat.name || cat.icon,
-            iconName: cat.icon || 'Package',
-            color: cat.color || '#2563EB',
-            sortOrder: cat.sort_order || 0,
-            active: !isDeleted,
-            isDeleted,
-            syncStatus: 'SYNCED',
-            updatedAt: cat.updated_at
+        const invMap = new Map<string, number>();
+
+        for (const inv of data) {
+          const qty = Number(inv.quantity);
+          invMap.set(inv.product_id, qty);
+          await LocalDB.put('inventory', {
+            id: inv.id || `${inv.store_id}_${inv.product_id}`,
+            storeId: inv.store_id,
+            productId: inv.product_id,
+            quantity: qty,
+            updatedAt: inv.updated_at
           });
         }
+
+        // Mirror stock quantities into current StorageService products
+        const currentProducts = StorageService.getProducts();
+        let updatedCount = 0;
+        const updatedProducts = currentProducts.map(p => {
+          if (invMap.has(p.id)) {
+            updatedCount++;
+            return {
+              ...p,
+              stock: invMap.get(p.id)!,
+              updatedAt: new Date().toISOString()
+            };
+          }
+          return p;
+        });
+
+        if (updatedCount > 0) {
+          StorageService.saveProducts(updatedProducts);
+        }
+
         const latest = data[data.length - 1].updated_at;
-        if (latest) await this.saveCursor('categories', storeId, latest);
+        if (latest) await this.saveCursor('inventory', storeId, latest);
         return data.length;
       }
     } catch (_) {}
@@ -645,21 +850,35 @@ class SyncEngineClass {
     if (!supabase) return 0;
     try {
       const cursor = await this.getCursor('products', storeId);
-      let query = supabase
-        .from('products')
-        .select('*')
-        .eq('store_id', storeId)
-        .order('updated_at', { ascending: true });
+      const data = await this.pullEntityChanges('products', storeId, cursor);
 
-      if (cursor) {
-        query = query.gt('updated_at', cursor);
-      }
+      if (Array.isArray(data) && data.length > 0) {
+        const currentProducts = StorageService.getProducts();
+        const productMap = new Map<string, Product>();
+        currentProducts.forEach(p => productMap.set(p.id, p));
 
-      const { data, error } = await query;
-      if (!error && Array.isArray(data) && data.length > 0) {
         for (const p of data) {
           const isDeleted = Boolean(p.deleted_at || p.is_active === false);
-          await LocalDB.put('products', {
+          const existing = productMap.get(p.id);
+
+          // Timestamp-based Last-Write-Wins (LWW) conflict resolution
+          if (existing && (existing as any).syncStatus === 'PENDING_UPLOAD' && existing.updatedAt && p.updated_at) {
+            if (new Date(existing.updatedAt).getTime() > new Date(p.updated_at).getTime()) {
+              // Local change is newer; keep local version pending
+              continue;
+            }
+          }
+
+          // Resolve accurate stock quantity from inventory store or local cache
+          let stockQty = existing ? existing.stock : Number(p.stock_minimum || 0);
+          try {
+            const invRec = await LocalDB.getById<any>('inventory', `${storeId}_${p.id}`);
+            if (invRec && invRec.quantity !== undefined) {
+              stockQty = Number(invRec.quantity);
+            }
+          } catch (_) {}
+
+          const productRecord: Product = {
             id: p.id,
             storeId: p.store_id,
             categoryId: p.category_id || '',
@@ -670,18 +889,23 @@ class SyncEngineClass {
             price: Number(p.price),
             cost: Number(p.cost || 0),
             unit: p.unit || 'item',
-            trackInventory: p.track_inventory,
-            stock: Number(p.stock_minimum || 50),
+            trackInventory: Boolean(p.track_inventory),
+            stock: stockQty,
             lowStockThreshold: Number(p.stock_minimum || 10),
             active: !isDeleted,
-            isDeleted,
-            isFavorite: p.is_favorite,
+            isFavorite: Boolean(p.is_favorite),
             imageUrl: p.image_url,
-            syncStatus: 'SYNCED',
             createdAt: p.created_at,
             updatedAt: p.updated_at
-          });
+          };
+
+          await LocalDB.put('products', { ...productRecord, isDeleted, syncStatus: 'SYNCED' });
+          productMap.set(p.id, productRecord);
         }
+
+        // Mirror directly to StorageService so UI immediately reflects cloud master data
+        StorageService.saveProducts(Array.from(productMap.values()));
+
         const latest = data[data.length - 1].updated_at;
         if (latest) await this.saveCursor('products', storeId, latest);
         return data.length;
@@ -694,13 +918,23 @@ class SyncEngineClass {
     if (!supabase) return 0;
     try {
       const cursor = await this.getCursor('taxes', storeId);
-      let query = supabase.from('taxes').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
-      if (cursor) query = query.gt('updated_at', cursor);
-      const { data, error } = await query;
-      if (!error && Array.isArray(data) && data.length > 0) {
+      const data = await this.pullEntityChanges('taxes', storeId, cursor);
+
+      if (Array.isArray(data) && data.length > 0) {
         for (const t of data) {
           await LocalDB.put('taxes', t);
         }
+
+        const taxConfigs: TaxConfig[] = data.map(t => ({
+          id: t.id,
+          storeId: t.store_id || storeId,
+          name: t.name,
+          rate: Number(t.rate),
+          inclusive: Boolean(t.is_inclusive),
+          active: Boolean(t.is_active)
+        }));
+        StorageService.saveTaxConfigs(taxConfigs);
+
         const latest = data[data.length - 1].updated_at;
         if (latest) await this.saveCursor('taxes', storeId, latest);
         return data.length;
@@ -713,28 +947,39 @@ class SyncEngineClass {
     if (!supabase) return 0;
     try {
       const cursor = await this.getCursor('customers', storeId);
-      let query = supabase.from('customers').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
-      if (cursor) query = query.gt('updated_at', cursor);
-      const { data, error } = await query;
-      if (!error && Array.isArray(data) && data.length > 0) {
+      const data = await this.pullEntityChanges('customers', storeId, cursor);
+
+      if (Array.isArray(data) && data.length > 0) {
+        const currentCusts = StorageService.getCustomers();
+        const custMap = new Map<string, Customer>();
+        currentCusts.forEach(c => custMap.set(c.id, c));
+
         for (const c of data) {
-          await LocalDB.put('customers', {
+          const rawName: string = c.name || '';
+          const nameParts = rawName.split(' ');
+          const custRecord: Customer = {
             id: c.id,
             storeId: c.store_id,
-            name: c.name,
+            firstName: c.first_name || (nameParts[0] || 'Customer'),
+            lastName: c.last_name || (nameParts.slice(1).join(' ') || ''),
             phone: c.phone || '',
             email: c.email || '',
             address: c.address || '',
             notes: c.notes || '',
             loyaltyPoints: c.loyalty_points || 0,
+            lifetimePoints: c.loyalty_points || 0,
             totalSpent: Number(c.total_spent || 0),
             totalOrders: c.total_orders || 0,
-            active: c.is_active,
-            syncStatus: 'SYNCED',
             createdAt: c.created_at,
             updatedAt: c.updated_at
-          });
+          };
+
+          await LocalDB.put('customers', { ...custRecord, active: c.is_active !== false, syncStatus: 'SYNCED' });
+          custMap.set(c.id, custRecord);
         }
+
+        StorageService.saveCustomers(Array.from(custMap.values()));
+
         const latest = data[data.length - 1].updated_at;
         if (latest) await this.saveCursor('customers', storeId, latest);
         return data.length;
@@ -747,13 +992,33 @@ class SyncEngineClass {
     if (!supabase) return 0;
     try {
       const cursor = await this.getCursor('printers', storeId);
-      let query = supabase.from('printers').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
-      if (cursor) query = query.gt('updated_at', cursor);
-      const { data, error } = await query;
-      if (!error && Array.isArray(data) && data.length > 0) {
+      const data = await this.pullEntityChanges('printers', storeId, cursor);
+
+      if (Array.isArray(data) && data.length > 0) {
         for (const pr of data) {
           await LocalDB.put('printers', pr);
         }
+
+        const printersList: any[] = data.map(pr => ({
+          id: pr.id,
+          name: pr.name,
+          type: pr.type || 'network',
+          ipAddress: pr.ip_address,
+          port: pr.port || 9100,
+          macAddress: pr.mac_address,
+          bluetoothName: pr.bluetooth_name,
+          usbVendorId: pr.usb_vendor_id,
+          usbProductId: pr.usb_product_id,
+          paperWidth: pr.paper_width || 80,
+          characterSet: pr.character_set || 'PC437_USA',
+          status: 'online',
+          isDefault: Boolean(pr.is_default),
+          role: pr.role || 'RECEIPT',
+          createdAt: pr.created_at,
+          updatedAt: pr.updated_at
+        }));
+        StorageService.savePrinters(printersList);
+
         const latest = data[data.length - 1].updated_at;
         if (latest) await this.saveCursor('printers', storeId, latest);
         return data.length;
@@ -765,9 +1030,20 @@ class SyncEngineClass {
   private async downloadStoreSettings(storeId: string): Promise<number> {
     if (!supabase) return 0;
     try {
-      const { data, error } = await supabase.from('stores').select('*').eq('id', storeId).maybeSingle();
-      if (!error && data) {
-        await LocalDB.put('stores', data);
+      const data = await this.pullEntityChanges('store_settings', storeId, null);
+      const storeRecord = Array.isArray(data) && data.length > 0 ? data[0] : null;
+
+      if (storeRecord) {
+        await LocalDB.put('stores', storeRecord);
+        const currentSettings = StorageService.getSettings();
+        StorageService.saveSettings({
+          ...currentSettings,
+          id: storeRecord.id,
+          name: storeRecord.name || currentSettings.name,
+          phone: storeRecord.phone || currentSettings.phone,
+          address: storeRecord.address || currentSettings.address,
+          currency: storeRecord.currency || currentSettings.currency
+        });
         return 1;
       }
     } catch (_) {}
@@ -778,13 +1054,33 @@ class SyncEngineClass {
     if (!supabase) return 0;
     try {
       const cursor = await this.getCursor('user_profiles', storeId);
-      let query = supabase.from('user_profiles').select('*').eq('store_id', storeId).order('updated_at', { ascending: true });
-      if (cursor) query = query.gt('updated_at', cursor);
-      const { data, error } = await query;
-      if (!error && Array.isArray(data) && data.length > 0) {
+      const data = await this.pullEntityChanges('user_profiles', storeId, cursor);
+
+      if (Array.isArray(data) && data.length > 0) {
         for (const u of data) {
           await LocalDB.put('user_profiles', u);
         }
+
+        const currentEmployees = StorageService.getEmployees();
+        const empMap = new Map<string, Employee>();
+        currentEmployees.forEach(e => empMap.set(e.id, e));
+
+        data.forEach(u => {
+          empMap.set(u.id, {
+            id: u.id,
+            storeId: u.store_id || storeId,
+            name: u.full_name || u.name || 'Staff Member',
+            email: u.email || '',
+            phone: u.phone || '',
+            role: (u.role || 'CASHIER').toLowerCase() as any,
+            pin: u.pin || '1234',
+            active: u.is_active !== false,
+            permissions: []
+          });
+        });
+
+        StorageService.saveEmployees(Array.from(empMap.values()));
+
         const latest = data[data.length - 1].updated_at;
         if (latest) await this.saveCursor('user_profiles', storeId, latest);
         return data.length;

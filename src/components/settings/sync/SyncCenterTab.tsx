@@ -150,6 +150,37 @@ export const SyncCenterTab: React.FC = () => {
         </div>
       </div>
 
+      {/* Active Sync Error Banner */}
+      {syncEngineStatus?.lastError && (
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-xs">
+          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-rose-700 dark:text-rose-400 uppercase tracking-wider text-[11px]">
+                {syncEngineStatus.lastError.type}
+              </span>
+              <span className="text-[10px] text-[var(--theme-text-secondary)] font-mono">
+                {new Date(syncEngineStatus.lastError.timestamp).toLocaleTimeString()}
+              </span>
+            </div>
+            <p className="text-[var(--theme-text-primary)]">
+              {syncEngineStatus.lastError.message}
+            </p>
+            <div className="flex items-center gap-2 pt-1">
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  syncEngineStatus.lastError.retryable
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                    : 'bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300'
+                }`}
+              >
+                {syncEngineStatus.lastError.retryable ? 'Automatic Retry Enabled' : 'Action Required'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Metrics Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Pending Uploads */}

@@ -124,22 +124,33 @@ if (typeof localStorage !== 'undefined') {
   }
 }
 
+const memoryStorage = new Map<string, string>();
+
 function getStorageItem<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw);
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      return JSON.parse(raw);
+    }
+    const mem = memoryStorage.get(key);
+    if (!mem) return fallback;
+    return JSON.parse(mem);
   } catch (e) {
-    console.error(`Failed to read ${key} from storage:`, e);
     return fallback;
   }
 }
 
 function setStorageItem<T>(key: string, value: T): void {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const serialized = JSON.stringify(value);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, serialized);
+    } else {
+      memoryStorage.set(key, serialized);
+    }
   } catch (e) {
-    console.error(`Failed to write ${key} to storage:`, e);
+    // Ignore storage errors in restricted contexts
   }
 }
 
