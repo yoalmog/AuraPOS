@@ -386,7 +386,7 @@ export async function runProductionPreflight(options?: {
   return report;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || import.meta.url.includes(path.basename(process.argv[1])))) {
   const ledgerArg = process.argv[2];
   runProductionPreflight({ ledgerFilePath: ledgerArg }).then(report => {
     if (report.validationVerdict !== 'READY_FOR_NEXT_MIGRATION' && report.validationVerdict !== 'NO_PENDING_MIGRATIONS') {

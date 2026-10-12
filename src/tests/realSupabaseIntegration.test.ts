@@ -14,6 +14,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import path from 'path';
 
 export interface CheckResult {
   step: string;
@@ -390,7 +391,7 @@ export async function runRealSupabaseVerification(): Promise<{
 }
 
 // Execute standalone if invoked directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || import.meta.url.includes(path.basename(process.argv[1])))) {
   runRealSupabaseVerification().then(report => {
     console.log('\n===============================================================');
     console.log('AURAPOS PHASE 4A.1 — REAL SUPABASE VERIFICATION REPORT');

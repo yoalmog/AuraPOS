@@ -181,6 +181,6 @@ export function runSecurityTests() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || import.meta.url.includes(path.basename(process.argv[1])))) {
   runSecurityTests();
 }

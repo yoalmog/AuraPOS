@@ -509,7 +509,14 @@ export function verifyMigrationIntegrity(
     }
 
     const content = fs.readFileSync(filePath);
-    const actualHash = crypto.createHash('sha256').update(content).digest('hex');
+    let actualHash = crypto.createHash('sha256').update(content).digest('hex');
+    if (actualHash !== expectedHash) {
+      const normalized = content.toString('utf8').replace(/\r\n/g, '\n');
+      const normalizedHash = crypto.createHash('sha256').update(Buffer.from(normalized, 'utf8')).digest('hex');
+      if (normalizedHash === expectedHash) {
+        actualHash = normalizedHash;
+      }
+    }
     hashes[filename] = actualHash;
 
     if (actualHash !== expectedHash) {

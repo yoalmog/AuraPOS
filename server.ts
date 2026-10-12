@@ -54,6 +54,7 @@ app.use((req, res, next) => {
 // ---------------------------------------------------------------------------
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const AURA_API_KEY = process.env.AURA_API_KEY || '';
 const tokenCache = new Map<string, number>(); // token -> expiry ms
 
@@ -214,14 +215,17 @@ app.post('/api/v1/sync/push', async (req, res) => {
     const { clientEventId, entityType, entityId, operation, payload } = event;
     try {
       // If Supabase is configured, proxy to cloud with idempotency
-      if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      if (SUPABASE_URL && (SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY)) {
+        const authHeader = req.headers.authorization || (SUPABASE_SERVICE_ROLE_KEY ? `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` : `Bearer ${SUPABASE_ANON_KEY}`);
+        const apiKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+
         if (entityType === 'sale' && payload) {
           const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/sync_process_sale`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              apikey: SUPABASE_ANON_KEY,
-              Authorization: req.headers.authorization || `Bearer ${SUPABASE_ANON_KEY}`
+              apikey: apiKey,
+              Authorization: authHeader
             },
             body: JSON.stringify({
               p_sale: payload.sale || payload,
@@ -243,8 +247,8 @@ app.post('/api/v1/sync/push', async (req, res) => {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              apikey: SUPABASE_ANON_KEY,
-              Authorization: req.headers.authorization || `Bearer ${SUPABASE_ANON_KEY}`
+              apikey: apiKey,
+              Authorization: authHeader
             },
             body: JSON.stringify({
               p_shift: payload,
@@ -311,8 +315,8 @@ app.get('/api/v1/sync/pull', async (req, res) => {
 
       const cloudRes = await fetch(url.toString(), {
         headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: req.headers.authorization || `Bearer ${SUPABASE_ANON_KEY}`
+          apikey: SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY,
+          Authorization: req.headers.authorization || (SUPABASE_SERVICE_ROLE_KEY ? `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` : `Bearer ${SUPABASE_ANON_KEY}`)
         }
       });
 

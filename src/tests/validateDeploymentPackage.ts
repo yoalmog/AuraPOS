@@ -107,7 +107,7 @@ export function validatePackage(): { allPassed: boolean; results: ValidationResu
   return { allPassed, results };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || import.meta.url.includes(path.basename(process.argv[1])))) {
   const result = validatePackage();
   process.exit(result.allPassed ? 0 : 1);
 }

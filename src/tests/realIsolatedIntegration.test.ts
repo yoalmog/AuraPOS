@@ -22,6 +22,7 @@
 
 import { Client } from 'pg';
 import crypto from 'crypto';
+import path from 'path';
 
 export interface IntegrationTestResult {
   suite: string;
@@ -586,7 +587,7 @@ export async function runRealIsolatedIntegrationTests(): Promise<IsolatedIntegra
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || import.meta.url.includes(path.basename(process.argv[1])))) {
   runRealIsolatedIntegrationTests().then(report => {
     if (report.failedCount > 0) {
       console.error(`::error::Integration tests failed with ${report.failedCount} failures.`);

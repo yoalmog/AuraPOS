@@ -197,7 +197,7 @@ FATAL: password authentication failed for user "postgres"
   // FIXTURE 5: AUTH CHECKS — NULL IDENTITY & MISSING STORE MEMBERSHIP
   // ---------------------------------------------------------------------------
   const migrationPath = path.resolve(process.cwd(), 'supabase/migrations/20261008000001_phase4a_cloud_foundation.sql');
-  const migrationContent = fs.readFileSync(migrationPath, 'utf8');
+  const migrationContent = fs.readFileSync(migrationPath, 'utf8').replace(/\r\n/g, '\n');
 
   // Verify sync_process_sale auth check clauses
   const hasNullIdentityReject =
@@ -311,6 +311,6 @@ FATAL: password authentication failed for user "postgres"
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || import.meta.url.includes(path.basename(process.argv[1])))) {
   runComprehensiveGuardFixtures();
 }
