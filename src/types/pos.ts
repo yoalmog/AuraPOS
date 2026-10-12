@@ -3,7 +3,7 @@
  * Conforming to Master Prompt PostgreSQL relational schema specifications
  */
 
-export type EmployeeRole = 'owner' | 'manager' | 'cashier';
+export type EmployeeRole = 'owner' | 'manager' | 'cashier' | 'supervisor' | 'inventory_manager';
 
 export interface Permission {
   id: string;

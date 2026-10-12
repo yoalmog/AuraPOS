@@ -77,7 +77,7 @@ export interface StaffMemberManagement {
   storeName: string;
   fullName: string;
   email: string;
-  role: 'owner' | 'manager' | 'cashier';
+  role: import('./pos.ts').EmployeeRole;
   phone?: string;
   isActive: boolean;
   lastLogin?: string;

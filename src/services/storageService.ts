@@ -16,6 +16,13 @@ import {
 } from '../types/pos.ts';
 import { Printer, PrinterRoute, PrintJob } from '../types/printer.ts';
 import { Supplier, PurchaseOrder, StockCountSession } from '../types/inventoryOperations.ts';
+import {
+  StockTransfer,
+  PromotionRule,
+  WebhookSubscription,
+  WebhookDeliveryLog,
+  EmployeeAuditLog
+} from '../types/advancedFeatures.ts';
 
 import {
   INITIAL_STORE_SETTINGS,
@@ -55,7 +62,12 @@ const STORAGE_KEYS = {
   PRODUCT_IMAGE_HISTORY: 'aurapos_product_image_history_v2',
   SUPPLIERS: 'aurapos_suppliers_v2',
   PURCHASE_ORDERS: 'aurapos_purchase_orders_v2',
-  STOCK_COUNT_SESSIONS: 'aurapos_stock_count_sessions_v2'
+  STOCK_COUNT_SESSIONS: 'aurapos_stock_count_sessions_v2',
+  TRANSFERS: 'aurapos_stock_transfers_v2',
+  PROMOTIONS: 'aurapos_promotions_v2',
+  WEBHOOK_SUBSCRIPTIONS: 'aurapos_webhook_subs_v2',
+  WEBHOOK_LOGS: 'aurapos_webhook_logs_v2',
+  EMPLOYEE_AUDIT_LOGS: 'aurapos_employee_audit_logs_v2'
 };
 
 export interface PaymentAuditLog {
@@ -404,6 +416,50 @@ export class StorageService {
   }
   static saveStockCountSessions(sessions: StockCountSession[]): void {
     setStorageItem(STORAGE_KEYS.STOCK_COUNT_SESSIONS, sessions);
+  }
+
+  // Stock Transfers Management
+  static getStockTransfers(storeId?: string): StockTransfer[] {
+    const list = getStorageItem<StockTransfer[]>(STORAGE_KEYS.TRANSFERS, []);
+    return storeId
+      ? list.filter(t => t.sourceStoreId === storeId || t.destinationStoreId === storeId)
+      : list;
+  }
+  static saveStockTransfers(transfers: StockTransfer[]): void {
+    setStorageItem(STORAGE_KEYS.TRANSFERS, transfers);
+  }
+
+  // Promotions Management
+  static getPromotions(): PromotionRule[] {
+    return getStorageItem<PromotionRule[]>(STORAGE_KEYS.PROMOTIONS, []);
+  }
+  static savePromotions(promotions: PromotionRule[]): void {
+    setStorageItem(STORAGE_KEYS.PROMOTIONS, promotions);
+  }
+
+  // Webhook Subscriptions Management
+  static getWebhookSubscriptions(): WebhookSubscription[] {
+    return getStorageItem<WebhookSubscription[]>(STORAGE_KEYS.WEBHOOK_SUBSCRIPTIONS, []);
+  }
+  static saveWebhookSubscriptions(subs: WebhookSubscription[]): void {
+    setStorageItem(STORAGE_KEYS.WEBHOOK_SUBSCRIPTIONS, subs);
+  }
+
+  // Webhook Delivery Logs Management
+  static getWebhookLogs(): WebhookDeliveryLog[] {
+    return getStorageItem<WebhookDeliveryLog[]>(STORAGE_KEYS.WEBHOOK_LOGS, []);
+  }
+  static saveWebhookLogs(logs: WebhookDeliveryLog[]): void {
+    setStorageItem(STORAGE_KEYS.WEBHOOK_LOGS, logs.slice(0, 200));
+  }
+
+  // Employee Audit Logs Management
+  static getEmployeeAuditLogs(employeeId?: string): EmployeeAuditLog[] {
+    const list = getStorageItem<EmployeeAuditLog[]>(STORAGE_KEYS.EMPLOYEE_AUDIT_LOGS, []);
+    return employeeId ? list.filter(l => l.employeeId === employeeId) : list;
+  }
+  static saveEmployeeAuditLogs(logs: EmployeeAuditLog[]): void {
+    setStorageItem(STORAGE_KEYS.EMPLOYEE_AUDIT_LOGS, logs.slice(0, 500));
   }
 
   // Reset all local storage data
