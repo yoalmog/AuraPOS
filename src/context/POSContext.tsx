@@ -184,6 +184,8 @@ interface POSContextType {
   setOpenDiscountModal: (open: boolean) => void;
   openHeldOrdersModal: boolean;
   setOpenHeldOrdersModal: (open: boolean) => void;
+  openBarcodeScannerModal: boolean;
+  setOpenBarcodeScannerModal: (open: boolean) => void;
   completedSale: Sale | null;
   setCompletedSale: (sale: Sale | null) => void;
 
@@ -466,6 +468,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [openCustomerModal, setOpenCustomerModal] = useState<boolean>(false);
   const [openDiscountModal, setOpenDiscountModal] = useState<boolean>(false);
   const [openHeldOrdersModal, setOpenHeldOrdersModal] = useState<boolean>(false);
+  const [openBarcodeScannerModal, setOpenBarcodeScannerModal] = useState<boolean>(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
 
   // Toasts
@@ -919,10 +922,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (cartItems.length > 0) {
           setActiveRoute('checkout');
         }
+      } else if (e.key === 'F8' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b')) {
+        e.preventDefault();
+        setOpenBarcodeScannerModal(prev => !prev);
       } else if (e.key === 'Escape') {
         setOpenCustomerModal(false);
         setOpenDiscountModal(false);
         setOpenHeldOrdersModal(false);
+        setOpenBarcodeScannerModal(false);
       }
     };
 
@@ -1016,6 +1023,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setOpenDiscountModal,
         openHeldOrdersModal,
         setOpenHeldOrdersModal,
+        openBarcodeScannerModal,
+        setOpenBarcodeScannerModal,
         completedSale,
         setCompletedSale,
         accessibility,

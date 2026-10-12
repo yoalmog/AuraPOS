@@ -56,6 +56,7 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
     availableStores,
     currentStoreId,
     switchStore,
+    setOpenBarcodeScannerModal,
     t
   } = usePOS();
 
@@ -259,6 +260,20 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
                   {searchTerm && (
                     <span className="w-2 h-2 rounded-full bg-[var(--theme-primary)] absolute top-1.5 right-1.5 ring-2 ring-[var(--theme-surface)]" />
                   )}
+                </button>
+              )}
+
+              {/* Barcode Scanner Quick Access */}
+              {activeRoute === 'pos' && (
+                <button
+                  type="button"
+                  onClick={() => setOpenBarcodeScannerModal(true)}
+                  className="flex items-center gap-1.5 min-h-[40px] px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-[var(--theme-text-primary)] bg-[var(--theme-surface)] hover:bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl transition-colors cursor-pointer shrink-0"
+                  title="Scan Barcode (F8)"
+                  aria-label="Scan Barcode (F8)"
+                >
+                  <Barcode className="w-4 h-4 text-[var(--theme-primary)]" />
+                  <span className="hidden lg:inline">{t('header.scanBarcode', 'Scan Barcode')}</span>
                 </button>
               )}
 

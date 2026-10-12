@@ -4,6 +4,12 @@ import { LocalDB } from '../db/localDatabase.ts';
 import { NativeBridgeService } from '../native/NativeBridgeService.ts';
 import { SyncRepository } from './SyncRepository.ts';
 
+export interface BarcodeLookupResult {
+  product: Product;
+  matchedVariant?: ProductVariant;
+  matchType: 'product_barcode' | 'product_sku' | 'variant_barcode' | 'variant_sku';
+}
+
 /**
  * AuraPOS Offline-First Product Repository
  * Conforming to Sections 1, 7, 37, 38, 53:
@@ -86,6 +92,14 @@ export class ProductRepository {
    * Barcode search: Scanner -> Local ProductRepository -> Product -> Cart (Section 37)
    */
   static async getByBarcode(barcode: string, storeId: string = 'store_aura_main'): Promise<Product | null> {
+    const result = await this.lookupBarcode(barcode, storeId);
+    return result ? result.product : null;
+  }
+
+  /**
+   * Detailed barcode and SKU lookup resolving both root products and specific variant matches
+   */
+  static async lookupBarcode(barcode: string, storeId: string = 'store_aura_main'): Promise<BarcodeLookupResult | null> {
     const code = barcode.trim();
     if (!code) return null;
 
@@ -93,13 +107,32 @@ export class ProductRepository {
       try {
         const res = await NativeBridgeService.localDb.getProductByBarcode(code);
         if (res.success && res.product) {
-          return res.product;
+          return { product: res.product, matchType: 'product_barcode' };
         }
       } catch (_) {}
     }
 
     const all = await this.getAll(storeId);
-    return all.find(p => p.barcode?.trim() === code) || null;
+    for (const p of all) {
+      if (p.barcode && p.barcode.trim() === code) {
+        return { product: p, matchType: 'product_barcode' };
+      }
+      if (p.sku && p.sku.trim().toLowerCase() === code.toLowerCase()) {
+        return { product: p, matchType: 'product_sku' };
+      }
+      if (p.variants && p.variants.length > 0) {
+        for (const v of p.variants) {
+          if (v.barcode && v.barcode.trim() === code) {
+            return { product: p, matchedVariant: v, matchType: 'variant_barcode' };
+          }
+          if (v.sku && v.sku.trim().toLowerCase() === code.toLowerCase()) {
+            return { product: p, matchedVariant: v, matchType: 'variant_sku' };
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   /**

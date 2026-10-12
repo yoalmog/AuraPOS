@@ -48,6 +48,10 @@ import { useAuraNetwork } from '../../hooks/useAuraNetwork.ts';
 import { LocalOcrEngine } from '../../services/ocr/localOcrEngine.ts';
 import { ImageOrientationService } from '../../services/ocr/imageOrientationService.ts';
 import { NativeBridgeService } from '../../services/native/NativeBridgeService.ts';
+import {
+  MenuScannerDiagnostics,
+  PipelineDiagnosticSummary
+} from '../../services/ocr/menuScannerDiagnostics.ts';
 
 export const MenuScannerView: React.FC = () => {
   const {
@@ -100,6 +104,7 @@ export const MenuScannerView: React.FC = () => {
   const [extractedProducts, setExtractedProducts] = useState<ExtractedProduct[]>([]);
   const [scanMetadata, setScanMetadata] = useState<{ title?: string; notes?: string }>({});
 
+  const [pipelineDiagnostics, setPipelineDiagnostics] = useState<PipelineDiagnosticSummary | null>(null);
   const [showDiagnosticDetails, setShowDiagnosticDetails] = useState<boolean>(false);
   const [copiedDiagnostic, setCopiedDiagnostic] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -428,6 +433,15 @@ export const MenuScannerView: React.FC = () => {
       );
 
       if (!scanResult.products || scanResult.products.length === 0) {
+        const diag = MenuScannerDiagnostics.generatePipelineReport({
+          pages: updatedPages,
+          ocrResults: updatedPages.map(p => p.ocrResult).filter(Boolean) as any,
+          extractedProducts: [],
+          extractedCategories: scanResult.categories || [],
+          existingProducts,
+          detectedCurrency: scanResult.detectedCurrency
+        });
+        setPipelineDiagnostics(diag);
         setCurrentStep('capture');
         showToast({
           type: 'warning',
@@ -445,6 +459,16 @@ export const MenuScannerView: React.FC = () => {
         notes: scanResult.notes
       });
 
+      const diag = MenuScannerDiagnostics.generatePipelineReport({
+        pages: updatedPages,
+        ocrResults: updatedPages.map(p => p.ocrResult).filter(Boolean) as any,
+        extractedProducts: scanResult.products,
+        extractedCategories: scanResult.categories,
+        existingProducts,
+        detectedCurrency: scanResult.detectedCurrency
+      });
+      setPipelineDiagnostics(diag);
+
       setCurrentStep('review');
       showToast({
         type: 'success',
@@ -453,6 +477,13 @@ export const MenuScannerView: React.FC = () => {
       });
     } catch (err: any) {
       console.error('Local OCR error:', err);
+      const errDiag = MenuScannerDiagnostics.generatePipelineReport({
+        pages,
+        extractedProducts: [],
+        extractedCategories: [],
+        existingProducts
+      });
+      setPipelineDiagnostics(errDiag);
       setCurrentStep('capture');
       showToast({
         type: 'error',
@@ -914,6 +945,75 @@ export const MenuScannerView: React.FC = () => {
               onTriggerFileUpload={() => fileInputRef.current?.click()}
             />
           </div>
+
+          {/* Diagnostic Stages Panel (Phase 6 Diagnostics) */}
+          {pipelineDiagnostics && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      pipelineDiagnostics.overallSuccess ? 'bg-emerald-500' : 'bg-rose-500'
+                    }`}
+                  />
+                  <h4 className="text-sm font-bold text-slate-900">
+                    Menu Import Diagnostic Stages ({pipelineDiagnostics.stages.filter(s => s.status === 'passed').length}/{pipelineDiagnostics.stages.length} Passed)
+                  </h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(JSON.stringify(pipelineDiagnostics, null, 2));
+                    setCopiedDiagnostic(true);
+                    setTimeout(() => setCopiedDiagnostic(false), 2000);
+                    showToast({
+                      type: 'info',
+                      title: 'Diagnostics Copied',
+                      message: 'Diagnostic report copied to clipboard.'
+                    });
+                  }}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedDiagnostic ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedDiagnostic ? 'Copied' : 'Copy Report'}</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                {pipelineDiagnostics.stages.map(st => (
+                  <div
+                    key={st.stage}
+                    className={`p-3 rounded-xl border text-xs flex flex-col justify-between ${
+                      st.status === 'passed'
+                        ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900'
+                        : st.status === 'warning'
+                        ? 'bg-amber-50/50 border-amber-200 text-amber-900'
+                        : 'bg-rose-50/50 border-rose-200 text-rose-900'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between font-bold mb-1">
+                        <span>{st.title}</span>
+                        {st.status === 'passed' ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : st.status === 'warning' ? (
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        )}
+                      </div>
+                      <p className="text-[11px] opacity-80 leading-relaxed">{st.summary}</p>
+                    </div>
+                    {st.remediationAdvice && (
+                      <span className="mt-2 text-[10px] italic opacity-90 border-t border-current/20 pt-1 block">
+                        Advice: {st.remediationAdvice}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Bottom Floating Action Bar */}
           {pages.length > 0 && (
