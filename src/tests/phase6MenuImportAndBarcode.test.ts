@@ -65,6 +65,8 @@ export async function runPhase6Tests() {
       stock: 45,
       lowStockThreshold: 10,
       active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       variants: [
         {
           id: 'var_beans_500g',
@@ -105,7 +107,9 @@ export async function runPhase6Tests() {
       trackInventory: false,
       stock: 100,
       lowStockThreshold: 5,
-      active: true
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     }
   ];
 

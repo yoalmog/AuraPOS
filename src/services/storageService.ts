@@ -15,6 +15,7 @@ import {
   OfflineSaleQueueItem
 } from '../types/pos.ts';
 import { Printer, PrinterRoute, PrintJob } from '../types/printer.ts';
+import { Supplier, PurchaseOrder, StockCountSession } from '../types/inventoryOperations.ts';
 
 import {
   INITIAL_STORE_SETTINGS,
@@ -51,7 +52,10 @@ const STORAGE_KEYS = {
   PRINT_JOBS: 'aurapos_print_jobs_v2',
   QR_PAYMENTS: 'aurapos_qr_payments_v2',
   PAYMENT_AUDIT_LOGS: 'aurapos_payment_audit_logs_v2',
-  PRODUCT_IMAGE_HISTORY: 'aurapos_product_image_history_v2'
+  PRODUCT_IMAGE_HISTORY: 'aurapos_product_image_history_v2',
+  SUPPLIERS: 'aurapos_suppliers_v2',
+  PURCHASE_ORDERS: 'aurapos_purchase_orders_v2',
+  STOCK_COUNT_SESSIONS: 'aurapos_stock_count_sessions_v2'
 };
 
 export interface PaymentAuditLog {
@@ -373,6 +377,33 @@ export class StorageService {
     const all = this.getProductImageHistory();
     all.unshift(meta);
     setStorageItem(STORAGE_KEYS.PRODUCT_IMAGE_HISTORY, all.slice(0, 500));
+  }
+
+  // Suppliers Management
+  static getSuppliers(storeId?: string): Supplier[] {
+    const list = getStorageItem<Supplier[]>(STORAGE_KEYS.SUPPLIERS, []);
+    return storeId ? list.filter(s => s.storeId === storeId) : list;
+  }
+  static saveSuppliers(suppliers: Supplier[]): void {
+    setStorageItem(STORAGE_KEYS.SUPPLIERS, suppliers);
+  }
+
+  // Purchase Orders Management
+  static getPurchaseOrders(storeId?: string): PurchaseOrder[] {
+    const list = getStorageItem<PurchaseOrder[]>(STORAGE_KEYS.PURCHASE_ORDERS, []);
+    return storeId ? list.filter(po => po.storeId === storeId) : list;
+  }
+  static savePurchaseOrders(orders: PurchaseOrder[]): void {
+    setStorageItem(STORAGE_KEYS.PURCHASE_ORDERS, orders);
+  }
+
+  // Stock Count Sessions Management
+  static getStockCountSessions(storeId?: string): StockCountSession[] {
+    const list = getStorageItem<StockCountSession[]>(STORAGE_KEYS.STOCK_COUNT_SESSIONS, []);
+    return storeId ? list.filter(sc => sc.storeId === storeId) : list;
+  }
+  static saveStockCountSessions(sessions: StockCountSession[]): void {
+    setStorageItem(STORAGE_KEYS.STOCK_COUNT_SESSIONS, sessions);
   }
 
   // Reset all local storage data
