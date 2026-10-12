@@ -20,7 +20,7 @@ on:
         type: choice
         options:
           - all
-        #  - debug 
+          - debug 
           - release
 
 concurrency:
@@ -107,7 +107,7 @@ jobs:
 
       # 11. Prepare Keystore for Signed Production Release APK
       - name: Configure Production Signing Keystore
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all'
+        if: github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all' || github.event.inputs.build_type == '' || !github.event.inputs.build_type || startsWith(github.ref, 'refs/tags/v')
         working-directory: ./android
         run: |
           if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
@@ -118,31 +118,32 @@ jobs:
             echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> $GITHUB_ENV
             echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> $GITHUB_ENV
           else
-            echo "No base64 keystore provided in secrets; checking for CI fallback or debug signing fallback..."
+            echo "Notice: No ANDROID_KEYSTORE_BASE64 provided in secrets. Gradle will use automatic fallback signing for CI release."
           fi
 
       # 12. Build Signed Production Release APK
       - name: Build Production Release APK
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all'
+        if: github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all' || github.event.inputs.build_type == '' || !github.event.inputs.build_type || startsWith(github.ref, 'refs/tags/v')
         working-directory: ./android
         run: ./gradlew assembleRelease --stacktrace
 
       # 13. Upload Production Release APK Artifact
       - name: Upload Production Release APK Artifact
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all'
+        if: github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all' || github.event.inputs.build_type == '' || !github.event.inputs.build_type || startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: aurapos-release-apk
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
           retention-days: 30
 
-      # 14. Create GitHub Release & Attach Signed Release APK (Release Tag Trigger: v*)
+      # 14. Create GitHub Release & Attach Signed Release APK (Release Tag Trigger: v* or push to main)
       - name: Create GitHub Release and Attach APK
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all' || !github.event.inputs.build_type))
         uses: softprops/action-gh-release@v2
         with:
-          name: "AuraPOS Release ${{ github.ref_name }}"
-          tag_name: ${{ github.ref_name }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && format('AuraPOS Release {0}', github.ref_name) || 'AuraPOS Production Release' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
           files: |
             android/app/build/outputs/apk/release/*.apk
           generate_release_notes: true
