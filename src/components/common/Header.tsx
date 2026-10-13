@@ -83,6 +83,10 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
         return t('nav.sales', 'Sales & Receipts');
       case 'products':
         return t('nav.products', 'Products Catalog');
+      case 'categories':
+        return t('nav.categories', 'Categories & Departments');
+      case 'menu-scanner':
+        return t('nav.menuScanner', 'AI Menu Scanner & OCR');
       case 'inventory':
         return t('nav.inventory', 'Inventory & Stock Control');
       case 'customers':
@@ -96,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
       case 'settings':
         return t('nav.settings', 'Store & System Settings');
       case 'backoffice':
-        return 'Cloud Back Office HQ';
+        return t('nav.backOffice', 'Cloud Back Office HQ');
       default:
         return t('nav.pos', 'Point of Sale');
     }

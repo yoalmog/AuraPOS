@@ -192,8 +192,7 @@ export class AccountingWebhookService {
       // 5. Cost of Goods Sold & Inventory Deductions
       let saleCogsCents = 0;
       sale.items.forEach(item => {
-        // Assume cost is embedded or estimate
-        const unitCost = (item as any).costPrice || 0;
+        const unitCost = item.costPrice || 0;
         saleCogsCents += Currency.toCents(unitCost * item.quantity);
       });
 

@@ -33,6 +33,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
     taxAmount,
     taxRate,
     grandTotal,
+    formatCurrency,
     activeCustomer,
     setActiveCustomer,
     holdCurrentOrder,
@@ -89,12 +90,12 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
         </div>
 
         {/* Customer Bar */}
-        <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-2 px-3">
+        <div className="flex items-center justify-between theme-surface border border-[var(--theme-border)] rounded-xl p-2 px-3">
           <div className="flex items-center gap-2 min-w-0">
             <Users className="w-4 h-4 text-blue-600 shrink-0" />
             {activeCustomer ? (
               <div className="truncate">
-                <p className="text-xs font-semibold text-slate-900 truncate">
+                <p className="text-xs font-semibold text-[var(--theme-text-primary)] truncate">
                   {activeCustomer.firstName} {activeCustomer.lastName}
                 </p>
                 <p className="text-[10px] text-blue-600 font-medium">
@@ -102,7 +103,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
                 </p>
               </div>
             ) : (
-              <span className="text-xs text-slate-500">{t('pos.walkInCustomer', 'Walk-in Customer')}</span>
+              <span className="text-xs text-[var(--theme-text-secondary)]">{t('pos.walkInCustomer', 'Walk-in Customer')}</span>
             )}
           </div>
 
@@ -141,7 +142,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
           cartItems.map(item => (
             <div
               key={item.id}
-              className="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors gap-2"
+              className="flex items-center justify-between p-2.5 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-surface-variant)]/40 hover:bg-[var(--theme-surface-variant)] transition-colors gap-2"
             >
               {/* Product Thumbnail if available */}
               {item.imageUrl ? (
@@ -169,14 +170,14 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
 
               {/* Product Info */}
               <div className="min-w-0 flex-1">
-                <h5 className="text-xs font-semibold text-slate-900 truncate">
+                <h5 className="text-xs font-semibold text-[var(--theme-text-primary)] truncate">
                   {translateProductName(item.productId, item.productName)}
                 </h5>
                 {item.variantName && (
                   <p className="text-[11px] text-blue-600 font-medium truncate">{item.variantName}</p>
                 )}
-                <p className="text-xs font-mono text-slate-500 mt-0.5">
-                  ${item.unitPrice.toFixed(2)} {t('pos.each', 'each')}
+                <p className="text-xs font-mono text-[var(--theme-text-secondary)] mt-0.5">
+                  {formatCurrency(item.unitPrice)} {t('pos.each', 'each')}
                 </p>
               </div>
 
@@ -205,8 +206,8 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
 
               {/* Line Total & Remove */}
               <div className="text-right min-w-[55px] pl-1">
-                <p className="text-xs font-bold font-mono text-slate-900">
-                  ${(item.unitPrice * item.quantity).toFixed(2)}
+                <p className="text-xs font-bold font-mono text-[var(--theme-text-primary)]">
+                  {formatCurrency(item.unitPrice * item.quantity)}
                 </p>
                 <button
                   onClick={() => removeCartItem(item.id)}
@@ -222,25 +223,25 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
       </div>
 
       {/* Cart Summary & Financial Totals */}
-      <div className="p-4 border-t border-slate-200 bg-slate-50/50 space-y-2">
+      <div className="p-4 border-t border-[var(--theme-border)] bg-[var(--theme-surface-variant)]/30 space-y-2">
         {/* Subtotal */}
-        <div className="flex justify-between text-xs text-slate-600">
+        <div className="flex justify-between text-xs text-[var(--theme-text-secondary)]">
           <span>{t('pos.subtotal', 'Subtotal')}</span>
-          <span className="font-mono tabular-nums font-medium">${subtotal.toFixed(2)}</span>
+          <span className="font-mono tabular-nums font-medium text-[var(--theme-text-primary)]">{formatCurrency(subtotal)}</span>
         </div>
 
         {/* Discount Row */}
         {discountAmount > 0 && (
-          <div className="flex justify-between text-xs text-emerald-700 items-center">
-            <span className="flex items-center gap-1">
+          <div className="flex justify-between text-xs text-emerald-600 items-center">
+            <span className="flex items-center gap-1 font-medium">
               <Tag className="w-3 h-3" />
               {activeDiscount ? activeDiscount.name : t('pos.discount', 'Discount')}
             </span>
             <div className="flex items-center gap-1.5 font-mono font-medium">
-              <span>-${discountAmount.toFixed(2)}</span>
+              <span>-{formatCurrency(discountAmount)}</span>
               <button
                 onClick={() => setActiveDiscount(null)}
-                className="text-slate-400 hover:text-slate-600"
+                className="text-[var(--theme-text-secondary)] hover:text-rose-500"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -249,71 +250,71 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
         )}
 
         {/* Tax */}
-        <div className="flex justify-between text-xs text-slate-600">
+        <div className="flex justify-between text-xs text-[var(--theme-text-secondary)]">
           <span>{t('pos.tax', 'Tax')} ({(taxRate * 100).toFixed(2)}%)</span>
-          <span className="font-mono tabular-nums font-medium">${taxAmount.toFixed(2)}</span>
+          <span className="font-mono tabular-nums font-medium text-[var(--theme-text-primary)]">{formatCurrency(taxAmount)}</span>
         </div>
 
         {/* Grand Total */}
-        <div className="pt-2 border-t border-slate-200 flex justify-between items-baseline">
-          <span className="text-sm font-bold text-slate-900 uppercase tracking-tight">
+        <div className="pt-2 border-t border-[var(--theme-border)] flex justify-between items-baseline">
+          <span className="text-sm font-bold text-[var(--theme-text-primary)] uppercase tracking-tight">
             {t('pos.total', 'Total')}
           </span>
-          <span className="text-2xl font-black font-mono text-slate-900 tabular-nums">
-            ${grandTotal.toFixed(2)}
+          <span className="text-2xl font-black font-mono text-[var(--theme-text-primary)] tabular-nums">
+            {formatCurrency(grandTotal)}
           </span>
         </div>
       </div>
 
       {/* Action Buttons */}
-      <div className="p-4 bg-white border-t border-slate-200 space-y-2.5">
+      <div className="p-4 theme-surface border-t border-[var(--theme-border)] space-y-2.5">
         {/* Secondary Row: Hold, Discount, Notes */}
         <div className="grid grid-cols-3 gap-2">
           <button
             type="button"
             disabled={cartItems.length === 0}
             onClick={holdCurrentOrder}
-            className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-surface)] hover:bg-[var(--theme-surface-variant)] text-[var(--theme-text-primary)] text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
             title="Hold Sale (F4)"
           >
-            <Clock className="w-3.5 h-3.5 text-amber-600" />
+            <Clock className="w-3.5 h-3.5 text-amber-500" />
             <span>{t('pos.hold', 'Hold')} (F4)</span>
           </button>
 
           <button
             type="button"
             onClick={() => setOpenDiscountModal(true)}
-            className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all"
+            className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-surface)] hover:bg-[var(--theme-surface-variant)] text-[var(--theme-text-primary)] text-xs font-semibold transition-all cursor-pointer"
             title="Apply Discount (F6)"
           >
-            <Tag className="w-3.5 h-3.5 text-blue-600" />
+            <Tag className="w-3.5 h-3.5 text-blue-500" />
             <span>{t('pos.discount', 'Discount')} (F6)</span>
           </button>
 
           <button
             type="button"
             onClick={() => setShowNotesInput(prev => !prev)}
-            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-xs font-semibold transition-all ${
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
               cartNotes
-                ? 'border-blue-300 bg-blue-50 text-blue-900'
-                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                ? 'border-blue-500 bg-blue-500/10 text-blue-600'
+                : 'border-[var(--theme-border)] bg-[var(--theme-surface)] hover:bg-[var(--theme-surface-variant)] text-[var(--theme-text-primary)]'
             }`}
             title="Order Notes"
           >
-            <FileText className="w-3.5 h-3.5 text-slate-500" />
+            <FileText className="w-3.5 h-3.5 text-[var(--theme-text-secondary)]" />
             <span>{t('pos.notes', 'Notes')}</span>
           </button>
         </div>
 
         {/* Order Notes Drawer if toggled */}
         {showNotesInput && (
-          <div className="p-2 bg-slate-50 border border-slate-200 rounded-xl">
+          <div className="p-2 bg-[var(--theme-surface-variant)] border border-[var(--theme-border)] rounded-xl">
             <textarea
               value={cartNotes}
               onChange={e => setCartNotes(e.target.value)}
               placeholder={t('pos.kitchenNotes', 'Special kitchen or receipt notes...')}
               rows={2}
-              className="w-full bg-white text-xs text-slate-800 p-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-[var(--theme-surface)] text-xs text-[var(--theme-text-primary)] p-2 rounded-lg border border-[var(--theme-border)] focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
         )}
@@ -326,14 +327,14 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
             setActiveRoute('checkout');
             if (onCloseMobile) onCloseMobile();
           }}
-          className="w-full flex items-center justify-center gap-2.5 py-3.5 px-4 active:scale-[0.99] text-sm font-bold rounded-xl shadow-md disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all"
+          className="w-full flex items-center justify-center gap-2.5 py-3.5 px-4 active:scale-[0.99] text-sm font-bold rounded-xl shadow-md disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all cursor-pointer"
           style={{
             backgroundColor: cartItems.length > 0 ? 'var(--theme-button)' : undefined,
             color: cartItems.length > 0 ? 'var(--theme-button-text)' : undefined
           }}
         >
           <CreditCard className="w-5 h-5" />
-          <span>{t('pos.charge', 'CHARGE')} ${grandTotal.toFixed(2)} (F7)</span>
+          <span>{t('pos.charge', 'CHARGE')} {formatCurrency(grandTotal)} (F7)</span>
         </button>
       </div>
     </div>

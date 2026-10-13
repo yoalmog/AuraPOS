@@ -90,7 +90,9 @@ export interface EmployeeAuditLog {
 
 export type PromotionType =
   | 'percentage_discount'
+  | 'percentage'
   | 'fixed_discount'
+  | 'fixed_amount'
   | 'bogo'
   | 'bundle'
   | 'tiered_spend';
@@ -102,6 +104,7 @@ export interface PromotionRule {
   type: PromotionType;
   value: number; // e.g., 20 for 20% off, 5.00 for $5 off
   minOrderAmount?: number;
+  minSpend?: number; // Compatibility alias for minOrderAmount
   requiredQuantity?: number;
   freeQuantity?: number;
   applicableProductIds?: string[];
@@ -144,6 +147,7 @@ export interface WebhookSubscription {
   id: string;
   name: string;
   url: string;
+  targetUrl?: string; // Compatibility alias for url
   secret: string;
   events: WebhookEventType[];
   active: boolean;
@@ -176,9 +180,11 @@ export type GeneralLedgerAccount =
 
 export interface GeneralLedgerJournalEntry {
   id: string;
+  entryNumber?: string; // Compatibility alias for id
   date: string;
   reference: string;
   account: GeneralLedgerAccount;
+  accountCode?: string; // Compatibility alias for account
   accountName: string;
   description: string;
   debit: number;
@@ -192,5 +198,7 @@ export interface GeneralLedgerReport {
   entries: GeneralLedgerJournalEntry[];
   totalDebit: number;
   totalCredit: number;
+  totalDebits?: number; // Compatibility alias for totalDebit
+  totalCredits?: number; // Compatibility alias for totalCredit
   isBalanced: boolean;
 }

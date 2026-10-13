@@ -89,6 +89,7 @@ export interface Product {
   barcode: string;
   price: number;
   cost: number;
+  costPrice?: number; // Compatibility alias for cost
   unit: string; // 'item', 'kg', 'lb', 'oz', 'cup'
   trackInventory: boolean;
   stock: number;
@@ -226,6 +227,7 @@ export interface SaleItem {
   taxAmount: number;
   lineTotal: number;
   returnedQuantity?: number;
+  costPrice?: number; // Cost of goods for journal entry COGS
 }
 
 export interface Sale {

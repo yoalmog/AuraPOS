@@ -26,6 +26,7 @@ export const POSScreen: React.FC<POSScreenProps> = ({ searchTerm }) => {
   const {
     cartItems,
     grandTotal,
+    formatCurrency,
     t,
     currentStoreId,
     addToCart,
@@ -124,7 +125,7 @@ export const POSScreen: React.FC<POSScreenProps> = ({ searchTerm }) => {
               <span className="text-sm font-bold">{t('pos.viewOrder', 'View Current Order')}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-base font-black font-mono">${grandTotal.toFixed(2)}</span>
+              <span className="text-base font-black font-mono">{formatCurrency(grandTotal)}</span>
               <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
                 <ArrowRight className="w-3.5 h-3.5" />
               </div>

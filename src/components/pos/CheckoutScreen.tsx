@@ -34,6 +34,7 @@ export const CheckoutScreen: React.FC = () => {
     taxAmount,
     taxRate,
     grandTotal,
+    formatCurrency,
     currentEmployee,
     cartNotes,
     clearCart,
@@ -396,12 +397,12 @@ export const CheckoutScreen: React.FC = () => {
                         <p className="text-[11px] text-blue-600">{item.variantName}</p>
                       )}
                       <p className="text-[11px] text-slate-400 font-mono">
-                        ${item.unitPrice.toFixed(2)} {t('pos.each', 'each')}
+                        {formatCurrency(item.unitPrice)} {t('pos.each', 'each')}
                       </p>
                     </div>
                   </div>
                   <span className="font-mono font-bold text-slate-900 shrink-0">
-                    ${Currency.multiply(item.unitPrice, item.quantity).toFixed(2)}
+                    {formatCurrency(Currency.multiply(item.unitPrice, item.quantity))}
                   </span>
                 </div>
               ))}
@@ -420,25 +421,25 @@ export const CheckoutScreen: React.FC = () => {
           <div className="border-t border-slate-200 pt-4 space-y-2 text-xs">
             <div className="flex justify-between text-slate-600">
               <span>{t('pos.subtotal', 'Subtotal')}</span>
-              <span className="font-mono tabular-nums font-semibold">${subtotal.toFixed(2)}</span>
+              <span className="font-mono tabular-nums font-semibold">{formatCurrency(subtotal)}</span>
             </div>
 
             {discountAmount > 0 && (
               <div className="flex justify-between text-emerald-700 font-semibold">
                 <span>{t('pos.discount', 'Discount')} ({activeDiscount?.name || 'Promo'})</span>
-                <span className="font-mono tabular-nums">-${discountAmount.toFixed(2)}</span>
+                <span className="font-mono tabular-nums">-{formatCurrency(discountAmount)}</span>
               </div>
             )}
 
             <div className="flex justify-between text-slate-600">
               <span>{t('pos.tax', 'Tax')} ({(taxRate * 100).toFixed(2)}%)</span>
-              <span className="font-mono tabular-nums font-semibold">${taxAmount.toFixed(2)}</span>
+              <span className="font-mono tabular-nums font-semibold">{formatCurrency(taxAmount)}</span>
             </div>
 
             <div className="pt-3 border-t border-slate-200 flex justify-between items-baseline">
               <span className="text-base font-bold text-slate-900">{t('pos.total', 'Total Due')}</span>
               <span className="text-3xl font-black font-mono text-slate-900 tabular-nums">
-                ${grandTotal.toFixed(2)}
+                {formatCurrency(grandTotal)}
               </span>
             </div>
 
@@ -512,7 +513,7 @@ export const CheckoutScreen: React.FC = () => {
                       isCashInsufficient ? 'text-slate-400' : 'text-emerald-600'
                     }`}
                   >
-                    ${changeDue.toFixed(2)}
+                    {formatCurrency(changeDue)}
                   </p>
                 </div>
               </div>
@@ -522,18 +523,18 @@ export const CheckoutScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleQuickTender(grandTotal)}
-                  className="py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl border border-blue-200 transition-colors"
+                  className="py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl border border-blue-200 transition-colors cursor-pointer"
                 >
-                  {t('checkout.exact', 'Exact')} (${grandTotal.toFixed(2)})
+                  {t('checkout.exact', 'Exact')} ({formatCurrency(grandTotal)})
                 </button>
                 {quickTenderAmounts.map(amt => (
                   <button
                     key={amt}
                     type="button"
                     onClick={() => handleQuickTender(amt)}
-                    className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold font-mono text-xs rounded-xl border border-slate-200 transition-colors"
+                    className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold font-mono text-xs rounded-xl border border-slate-200 transition-colors cursor-pointer"
                   >
-                    ${amt}
+                    {formatCurrency(amt)}
                   </button>
                 ))}
               </div>
@@ -578,9 +579,9 @@ export const CheckoutScreen: React.FC = () => {
                 type="button"
                 disabled={isCashInsufficient}
                 onClick={handleCompleteCash}
-                className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-sm rounded-xl shadow-md disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all mt-2"
+                className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-sm rounded-xl shadow-md disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all mt-2 cursor-pointer"
               >
-                {t('checkout.completeCashBtn', 'COMPLETE CASH PAYMENT')} · {t('checkout.change', 'CHANGE')} ${changeDue.toFixed(2)}
+                {t('checkout.completeCashBtn', 'COMPLETE CASH PAYMENT')} · {t('checkout.change', 'CHANGE')} {formatCurrency(changeDue)}
               </button>
             </div>
           )}
@@ -594,7 +595,7 @@ export const CheckoutScreen: React.FC = () => {
 
               <div>
                 <h4 className="text-lg font-bold text-slate-900">{t('checkout.cardTerminal', 'Card Payment Terminal')}</h4>
-                <p className="text-sm text-slate-500 mt-1">{t('checkout.amountToCharge', 'Amount to charge')}: ${grandTotal.toFixed(2)}</p>
+                <p className="text-sm text-slate-500 mt-1">{t('checkout.amountToCharge', 'Amount to charge')}: {formatCurrency(grandTotal)}</p>
                 <p className="text-xs font-mono font-semibold text-blue-600 mt-2 bg-blue-50 py-1.5 px-3 rounded-full inline-block">
                   {cardStatusText}
                 </p>
@@ -605,7 +606,7 @@ export const CheckoutScreen: React.FC = () => {
                   type="button"
                   disabled={isProcessingCard}
                   onClick={handleStartCardPayment}
-                  className="w-full py-3.5 active:scale-[0.99] font-bold text-sm rounded-xl shadow-md disabled:opacity-60 transition-all flex items-center justify-center gap-2"
+                  className="w-full py-3.5 active:scale-[0.99] font-bold text-sm rounded-xl shadow-md disabled:opacity-60 transition-all flex items-center justify-center gap-2 cursor-pointer"
                   style={{ backgroundColor: 'var(--theme-button)', color: 'var(--theme-button-text)' }}
                 >
                   <ShieldCheck className="w-4 h-4" />
@@ -630,14 +631,14 @@ export const CheckoutScreen: React.FC = () => {
                 <h4 className="text-lg font-bold text-slate-900">{t('checkout.mobileTitle', 'Contactless Mobile Payment')}</h4>
                 <p className="text-sm text-slate-500 mt-1">Apple Pay · Google Wallet · Samsung Pay</p>
                 <p className="text-2xl font-black font-mono text-slate-900 mt-2">
-                  ${grandTotal.toFixed(2)}
+                  {formatCurrency(grandTotal)}
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={handleCompleteMobile}
-                className="w-full max-w-sm py-3.5 bg-slate-900 hover:bg-black text-white font-bold text-sm rounded-xl shadow-md transition-all"
+                className="w-full max-w-sm py-3.5 bg-slate-900 hover:bg-black text-white font-bold text-sm rounded-xl shadow-md transition-all cursor-pointer"
               >
                 {t('checkout.tapPhone', 'Tap Customer Phone to Reader')}
               </button>
@@ -655,14 +656,14 @@ export const CheckoutScreen: React.FC = () => {
                 <h4 className="text-lg font-bold text-slate-900">{t('checkout.bankTitle', 'Direct Bank / Wire Transfer')}</h4>
                 <p className="text-sm text-slate-500 mt-1">Invoice / Corporate Wholesale Payment</p>
                 <p className="text-2xl font-black font-mono text-slate-900 mt-2">
-                  ${grandTotal.toFixed(2)}
+                  {formatCurrency(grandTotal)}
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={handleCompleteBank}
-                className="w-full max-w-sm py-3.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm rounded-xl shadow-md transition-all"
+                className="w-full max-w-sm py-3.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm rounded-xl shadow-md transition-all cursor-pointer"
               >
                 {t('checkout.confirmWire', 'Confirm Wire / Bank Reference')}
               </button>
