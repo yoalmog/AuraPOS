@@ -601,7 +601,7 @@ export class MenuScannerApi {
     requestId: string = `client_${Date.now()}`
   ): Promise<AnalyzeMenuResponse> {
     const startTime = performance.now();
-    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro'];
     let lastError: any = null;
 
     const imageParts = optimizedPages.map(p => {
