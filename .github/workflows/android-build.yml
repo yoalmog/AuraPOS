@@ -142,12 +142,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'all' || !github.event.inputs.build_type))
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ startsWith(github.ref, 'refs/tags/v') && format('AuraPOS Release {0}', github.ref_name) || 'AuraPOS Production Release' }}
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && format('AuraPOS Release {0}', github.ref_name) || format('AuraPOS Production Release v1.0.{0}', github.run_number) }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && (github.run_attempt == 1 && github.ref_name || format('{0}-build{1}', github.ref_name, github.run_attempt)) || (github.run_attempt == 1 && format('v1.0.{0}', github.run_number) || format('v1.0.{0}-build{1}', github.run_number, github.run_attempt)) }}
           files: |
             android/app/build/outputs/apk/release/*.apk
+          make_latest: true
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          prerelease: ${{ startsWith(github.ref, 'refs/tags/v') && (contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha')) || false }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
