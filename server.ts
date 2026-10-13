@@ -491,7 +491,7 @@ app.post('/api/products/generate-image', async (req, res) => {
     let generatedBase64: string | null = null;
     try {
       const imgRes = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-image',
+        model: 'imagen-3.0-generate-002',
         contents: effectivePrompt
       });
       const candidate = imgRes.candidates?.[0];
@@ -559,7 +559,7 @@ app.post('/api/products/generate-batch-images', async (req, res) => {
       try {
         const ai = new GoogleGenAI({ apiKey });
         const imgRes = await ai.models.generateContent({
-          model: 'gemini-3.1-flash-image',
+          model: 'imagen-3.0-generate-002',
           contents: pPrompt
         });
         const candidate = imgRes.candidates?.[0];
@@ -657,11 +657,16 @@ app.post('/api/menu/analyze', async (req, res) => {
       });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    const apiKey =
+      (typeof req.body?.apiKey === 'string' && req.body.apiKey) ||
+      (typeof req.headers['x-gemini-api-key'] === 'string' && (req.headers['x-gemini-api-key'] as string)) ||
+      process.env.GEMINI_API_KEY ||
+      process.env.API_KEY ||
+      '';
     if (!apiKey) {
       return res.status(500).json({
         success: false,
-        error: 'GEMINI_API_KEY is not configured on the server. Please check your environment configuration.',
+        error: 'GEMINI_API_KEY is not configured on the server. Please check your environment configuration or provide a key in the app.',
         errorType: 'CONFIG_ERROR',
         requestId
       });
@@ -736,8 +741,9 @@ CRITICAL EXTRACTION INSTRUCTIONS:
 
     // Models supported by @google/genai SDK in priority order (accuracy first, light model as fallback)
     const modelsToTry = [
-      'gemini-3.8-flash',
-      'gemini-3.1-flash-lite'
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash'
     ];
 
     for (const modelName of modelsToTry) {

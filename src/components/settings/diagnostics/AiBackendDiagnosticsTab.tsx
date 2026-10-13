@@ -18,7 +18,10 @@ import {
   Layers,
   Sparkles,
   Wifi,
-  WifiOff
+  WifiOff,
+  Key,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import {
   NativeBridgeService,
@@ -33,6 +36,11 @@ export const AiBackendDiagnosticsTab: React.FC = () => {
   const [configuredUrl, setConfiguredUrl] = useState<string>(
     settings.apiServerUrl || MenuScannerApi.getEffectiveBackendUrl()
   );
+
+  // Gemini API Key state
+  const [apiKeyInput, setApiKeyInput] = useState<string>(() => MenuScannerApi.getStoredApiKey());
+  const [isApiKeySaved, setIsApiKeySaved] = useState<boolean>(false);
+  const [showKeySecret, setShowKeySecret] = useState<boolean>(false);
 
   // Diagnostic state
   const [isTesting, setIsTesting] = useState<boolean>(false);
@@ -121,6 +129,24 @@ export const AiBackendDiagnosticsTab: React.FC = () => {
   const handlePresetSelect = (presetUrl: string) => {
     setConfiguredUrl(presetUrl);
     runConnectionTest(presetUrl);
+  };
+
+  const handleSaveApiKey = () => {
+    const clean = apiKeyInput.trim();
+    MenuScannerApi.setStoredApiKey(clean);
+    updateSettings({
+      ...settings,
+      geminiApiKey: clean
+    });
+    setIsApiKeySaved(true);
+    setTimeout(() => setIsApiKeySaved(false), 2500);
+    showToast({
+      type: 'success',
+      title: clean ? 'Gemini API Key Saved' : 'API Key Cleared',
+      message: clean
+        ? 'Gemini Vision AI key configured for menu scanning.'
+        : 'Gemini API Key removed.'
+    });
   };
 
   return (
@@ -220,6 +246,59 @@ export const AiBackendDiagnosticsTab: React.FC = () => {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Google Gemini API Key Card */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+              Google Gemini Vision API Key (For Menu OCR & AI Generation)
+            </label>
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:underline"
+            >
+              <span>Get Free Key at Google AI Studio</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <Key className="w-4 h-4" />
+              </div>
+              <input
+                type={showKeySecret ? 'text' : 'password'}
+                value={apiKeyInput}
+                onChange={e => setApiKeyInput(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKeySecret(prev => !prev)}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                title={showKeySecret ? 'Hide Key' : 'Show Key'}
+              >
+                {showKeySecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveApiKey}
+              className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer shrink-0"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{isApiKeySaved ? 'Saved!' : 'Save Key'}</span>
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2">
+            When configured, Menu Scanner calls Gemini Multimodal Vision directly from your terminal or passes through your local server.
+          </p>
         </div>
       </div>
 

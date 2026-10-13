@@ -226,8 +226,10 @@ export class LocalOcrEngine {
       scanResult: {
         menuTitle: menuTitle || (categoriesArray[0]?.name ? `${categoriesArray[0].name}` : 'Menú Escaneado'),
         detectedCurrency,
-        confidenceScore: allProducts.filter(p => !p.isLowConfidence).length / Math.max(1, allProducts.length),
-        notes: `Menú en español procesado en ${pages.length} páginas.`,
+        notes:
+          allProducts.length === 0
+            ? 'No text detected on the menu image. Please configure your Google Gemini API Key in the scanner for instant AI extraction, or use the AuraPOS Android App with Google ML Kit.'
+            : `Menú en español procesado en ${pages.length} páginas.`,
         categories: categoriesArray,
         products: allProducts
       },

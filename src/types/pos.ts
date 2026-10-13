@@ -379,6 +379,7 @@ export interface StoreSettings {
   themeAccentColor?: string;
   themeCustomColors?: CustomThemeColors;
   apiServerUrl?: string;
+  geminiApiKey?: string;
   language?: string;
   address: string;
   city: string;

@@ -7,6 +7,7 @@ import { StorageService } from '../storageService.ts';
 export interface AnalyzeMenuRequest {
   requestId?: string;
   endpointUrl?: string;
+  apiKey?: string;
   pages: Array<{
     dataUrl: string;
     mimeType: string;
@@ -144,6 +145,49 @@ export class ExtractionDiagnosticError extends Error {
 }
 
 export class MenuScannerApi {
+  /**
+   * Stored user API key helper (from localStorage, StoreSettings, or environment)
+   */
+  static getStoredApiKey(): string {
+    try {
+      const local = typeof localStorage !== 'undefined' ? localStorage.getItem('aurapos_gemini_api_key') : null;
+      if (local && local.trim()) return local.trim();
+    } catch {}
+    try {
+      const settings = StorageService.getSettings() as any;
+      if (settings?.geminiApiKey && typeof settings.geminiApiKey === 'string' && settings.geminiApiKey.trim()) {
+        return settings.geminiApiKey.trim();
+      }
+    } catch {}
+    const envKey = typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_GEMINI_API_KEY : '';
+    if (envKey && typeof envKey === 'string' && envKey.trim()) {
+      return envKey.trim();
+    }
+    return '';
+  }
+
+  static setStoredApiKey(key: string): void {
+    const clean = (key || '').trim();
+    try {
+      if (typeof localStorage !== 'undefined') {
+        if (clean) {
+          localStorage.setItem('aurapos_gemini_api_key', clean);
+        } else {
+          localStorage.removeItem('aurapos_gemini_api_key');
+        }
+      }
+    } catch {}
+    try {
+      const settings = StorageService.getSettings();
+      if (settings) {
+        StorageService.saveSettings({
+          ...settings,
+          geminiApiKey: clean
+        });
+      }
+    } catch {}
+  }
+
   /**
    * Returns the primary target backend base URL for display in diagnostics & settings
    */
@@ -291,11 +335,13 @@ export class MenuScannerApi {
 
     const candidateUrls = this.getCandidateEndpoints();
     const primaryEndpoint = candidateUrls[0];
+    const apiKey = this.getStoredApiKey();
 
     // Payload includes requestId and target endpointUrl for Android native forwarder (Requirement 19 & 22)
     const payload: AnalyzeMenuRequest = {
       requestId,
       endpointUrl: primaryEndpoint,
+      apiKey: apiKey || undefined,
       pages: optimizedPages
     };
 
@@ -322,7 +368,13 @@ export class MenuScannerApi {
       window.AndroidPOSNative?.analyzeMenu
     ) {
       try {
-        const nativeRes = await NativeBridgeService.menuScanner.analyzeMenuViaNative(JSON.stringify({ ...payload, authHeaders: await getApiAuthHeaders() }));
+        const authHeaders = await getApiAuthHeaders();
+        if (apiKey) {
+          authHeaders['X-Gemini-Api-Key'] = apiKey;
+        }
+        const nativeRes = await NativeBridgeService.menuScanner.analyzeMenuViaNative(
+          JSON.stringify({ ...payload, authHeaders })
+        );
         if (nativeRes && nativeRes.success && nativeRes.data) {
           onProgress?.('Processing results...');
           return nativeRes as AnalyzeMenuResponse;
@@ -351,6 +403,7 @@ export class MenuScannerApi {
 
     // Step 4: Execute Web/HTTP Request with structured error handling & 120s timeout
     let lastDiagnosticError: ExtractionDiagnosticError | null = null;
+    let serverRequestedClientFallback = false;
 
     for (let u = 0; u < candidateUrls.length; u++) {
       const endpointUrl = candidateUrls[u];
@@ -360,13 +413,19 @@ export class MenuScannerApi {
 
       try {
         console.log(`[AI_MENU_SCAN] Sending request to endpoint: ${endpointUrl} (timeout 120s, RequestId: ${requestId})`);
+        const authHeaders = await getApiAuthHeaders();
+        if (apiKey) {
+          authHeaders['X-Gemini-Api-Key'] = apiKey;
+          authHeaders['x-gemini-api-key'] = apiKey;
+        }
+
         const response = await fetch(endpointUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json',
             'X-Request-ID': requestId,
-            ...(await getApiAuthHeaders())
+            ...authHeaders
           },
           body: payloadJson,
           signal: controller.signal
@@ -374,7 +433,6 @@ export class MenuScannerApi {
 
         clearTimeout(timeoutId);
 
-        // If server responded with an HTTP status, do NOT retry other endpoints!
         if (response.ok) {
           onProgress?.('Processing results...');
           const result: AnalyzeMenuResponse = await response.json();
@@ -393,7 +451,7 @@ export class MenuScannerApi {
             });
           }
         } else {
-          // Server returned an error HTTP status (400, 401, 403, 404, 413, 429, 500, 502, 503)
+          // Server returned an error HTTP status
           let serverErrorMsg = `Server responded with HTTP ${response.status}: ${response.statusText}`;
           let errorType: ExtractionErrorType = `HTTP_${response.status}` as ExtractionErrorType;
 
@@ -406,6 +464,11 @@ export class MenuScannerApi {
               errorType = errJson.errorType;
             }
           } catch {}
+
+          if (errorType === 'CONFIG_ERROR' || response.status === 500) {
+            // Server has no GEMINI_API_KEY or failed internally
+            serverRequestedClientFallback = true;
+          }
 
           if (response.status === 413) {
             errorType = 'PAYLOAD_TOO_LARGE';
@@ -427,7 +490,7 @@ export class MenuScannerApi {
             serverErrorMsg = 'Bad Gateway (502). The upstream server failed to respond.';
           }
 
-          throw new ExtractionDiagnosticError({
+          const diagErr = new ExtractionDiagnosticError({
             stage: 'SERVER_RESPONSE',
             endpoint: endpointUrl,
             status: response.status,
@@ -436,16 +499,25 @@ export class MenuScannerApi {
             message: serverErrorMsg,
             requestId
           });
+
+          // If it's a fatal rate-limit or auth rejection specific to user credentials, throw immediately
+          if (response.status === 429) {
+            throw diagErr;
+          }
+
+          lastDiagnosticError = diagErr;
+          // If server reported CONFIG_ERROR, break to client direct attempt
+          if (errorType === 'CONFIG_ERROR') {
+            break;
+          }
         }
       } catch (err: any) {
         clearTimeout(timeoutId);
 
-        // If it is already an ExtractionDiagnosticError from a valid HTTP response, DO NOT retry!
-        if (err instanceof ExtractionDiagnosticError && err.status > 0) {
+        if (err instanceof ExtractionDiagnosticError && err.status === 429) {
           throw err;
         }
 
-        // Determine specific network failure state (Requirement 17)
         let errorType: ExtractionErrorType = 'BACKEND_UNREACHABLE';
         let userMessage = `Could not establish connection to the AuraPOS AI backend (${endpointUrl}).`;
 
@@ -463,7 +535,7 @@ export class MenuScannerApi {
           userMessage = 'DNS lookup failed. The hostname could not be resolved.';
         } else if (err.message && err.message.toLowerCase().includes('failed to fetch')) {
           errorType = 'BACKEND_UNREACHABLE';
-          userMessage = `Could not establish connection to the AuraPOS AI backend at ${endpointUrl}. Please check network connectivity or configure your server in Settings → AI Backend.`;
+          userMessage = `Could not establish connection to the AuraPOS AI backend at ${endpointUrl}.`;
         } else if (err.message) {
           userMessage = err.message;
         }
@@ -482,6 +554,30 @@ export class MenuScannerApi {
       }
     }
 
+    // Step 5: Direct Client-Side Gemini Vision Fallback
+    // If backend is unreachable or not configured with a server key, try direct client call
+    if (apiKey) {
+      console.log('[AI_MENU_SCAN] Attempting direct Google Gemini Vision call from client...');
+      try {
+        return await this.analyzeMenuClientDirect(optimizedPages, apiKey, onProgress, requestId);
+      } catch (directErr: any) {
+        console.warn('[AI_MENU_SCAN] Direct client Gemini Vision call failed:', directErr);
+        if (directErr instanceof ExtractionDiagnosticError) {
+          throw directErr;
+        }
+      }
+    } else if (serverRequestedClientFallback || (lastDiagnosticError && lastDiagnosticError.errorType === 'BACKEND_UNREACHABLE')) {
+      throw new ExtractionDiagnosticError({
+        stage: 'API_KEY_CHECK',
+        endpoint: 'client_configuration',
+        status: 0,
+        statusText: 'KEY_NOT_CONFIGURED',
+        errorType: 'CONFIG_ERROR',
+        message: 'Google Gemini API key required for menu scanning. Please configure your free API key in the scanner or settings.',
+        requestId
+      });
+    }
+
     if (lastDiagnosticError) {
       throw lastDiagnosticError;
     }
@@ -491,6 +587,185 @@ export class MenuScannerApi {
       endpoint: 'unknown',
       errorType: 'UNKNOWN_ERROR',
       message: 'Menu scanning could not be completed. The menu pages are preserved locally. Please retry.',
+      requestId
+    });
+  }
+
+  /**
+   * Direct browser/client Google Gemini Multimodal Vision API call
+   */
+  static async analyzeMenuClientDirect(
+    optimizedPages: Array<{ dataUrl: string; mimeType: string; rotation: number }>,
+    apiKey: string,
+    onProgress?: (stage: string) => void,
+    requestId: string = `client_${Date.now()}`
+  ): Promise<AnalyzeMenuResponse> {
+    const startTime = performance.now();
+    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    let lastError: any = null;
+
+    const imageParts = optimizedPages.map(p => {
+      const base64Data = p.dataUrl.includes('base64,') ? p.dataUrl.split('base64,')[1] : p.dataUrl;
+      return {
+        inlineData: {
+          mimeType: p.mimeType || 'image/jpeg',
+          data: base64Data
+        }
+      };
+    });
+
+    const promptText = `
+You are an expert Restaurant & Café Menu OCR Specialist and POS Catalog Engineer.
+Analyze the provided restaurant/cafe menu page image(s) thoroughly (supports English, Spanish, Italian, and all languages).
+
+CRITICAL EXTRACTION INSTRUCTIONS:
+0. Read ONLY what is actually printed on the image(s). NEVER invent, guess or complete items, names or prices. If a page is blurry, rotated or unreadable, extract only what you can truly read. If nothing is readable, return empty "categories" and "products" arrays and explain why in "notes". Pages may be slightly tilted or rotated: read the text in whatever orientation it appears.
+1. Extract ALL categories/sections, products, and prices. Section headings (e.g. "Starters", "Pizzas", "Drinks", "Desserts", "Cocktails") become categories. Keep the menu's own language and spelling.
+2. For each category: identify the clear Category Name; assign an appropriate Lucide icon name (e.g. Pizza, Coffee, Utensils, Flame, Wine, Beer, Cake, Salad, Sandwich, Sparkles, CupSoda, GlassWater); assign a clean modern hex color.
+3. For each product: extract the exact Item Name as printed; the description/ingredients only if printed under the item. If prices are in size columns (e.g. Small / Medium / Large), fill the 'variants' array with one entry per size and its price, and set 'price' to the lowest. If there is one price, set 'price' to it. Extract modifiers/extras only if printed on the menu. Detect dietary tags: isSpicy, isVegetarian, isGlutenFree, isAlcoholic.
+4. Deduplicate products if the same item appears across multiple scanned pages.
+5. Return ONLY pure valid JSON in the following exact format:
+{
+  "menuTitle": "Restaurant or Menu Title",
+  "detectedCurrency": "$ or S/ or €",
+  "notes": "Any special notes or promos",
+  "categories": [
+    {
+      "name": "Category Name",
+      "description": "Short description",
+      "color": "#2563EB",
+      "iconName": "Utensils",
+      "autoPrintKitchen": true
+    }
+  ],
+  "products": [
+    {
+      "name": "Item Name",
+      "categoryName": "Category Name",
+      "description": "Item ingredients and description",
+      "price": 12.50,
+      "cost": 6.00,
+      "unit": "portion",
+      "sku": "ITEM-101",
+      "isSpicy": false,
+      "isVegetarian": false,
+      "isGlutenFree": false,
+      "isAlcoholic": false,
+      "variants": [
+        { "name": "Regular", "price": 12.50, "sku": "ITEM-101-REG" }
+      ],
+      "modifiers": [
+        {
+          "name": "Options",
+          "required": false,
+          "options": [
+            { "name": "Extra sauce", "priceDelta": 1.50 }
+          ]
+        }
+      ]
+    }
+  ]
+}
+`;
+
+    for (const model of modelsToTry) {
+      try {
+        onProgress?.(`Analyzing menu with Google ${model}...`);
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  ...imageParts,
+                  { text: promptText }
+                ]
+              }
+            ],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+              maxOutputTokens: 16384
+            }
+          }),
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => ({}));
+          const errMsg = errBody?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+
+          if (response.status === 400 && (errMsg.includes('API key') || errMsg.includes('INVALID_ARGUMENT'))) {
+            throw new ExtractionDiagnosticError({
+              stage: 'CLIENT_GEMINI_AUTH',
+              endpoint: 'generativelanguage.googleapis.com',
+              status: response.status,
+              statusText: 'INVALID_API_KEY',
+              errorType: 'HTTP_401',
+              message: 'The provided Google Gemini API Key is invalid. Please verify or re-enter your key in Settings.',
+              requestId
+            });
+          }
+
+          if (response.status === 429) {
+            throw new ExtractionDiagnosticError({
+              stage: 'CLIENT_GEMINI_RATE_LIMIT',
+              endpoint: 'generativelanguage.googleapis.com',
+              status: 429,
+              statusText: 'RATE_LIMIT',
+              errorType: 'AI_RATE_LIMIT',
+              message: 'Google Gemini rate limit reached. Please wait a few moments and try again.',
+              requestId
+            });
+          }
+
+          lastError = new Error(`Model ${model} failed (${response.status}): ${errMsg}`);
+          continue;
+        }
+
+        const data = await response.json();
+        const candidateText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!candidateText) {
+          lastError = new Error(`Model ${model} returned empty response`);
+          continue;
+        }
+
+        const cleanJson = candidateText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+        const parsedData = JSON.parse(cleanJson);
+
+        return {
+          success: true,
+          data: parsedData,
+          modelUsed: model,
+          requestId,
+          timingMs: Math.round(performance.now() - startTime)
+        };
+      } catch (err: any) {
+        if (err instanceof ExtractionDiagnosticError) {
+          throw err;
+        }
+        lastError = err;
+      }
+    }
+
+    throw new ExtractionDiagnosticError({
+      stage: 'CLIENT_GEMINI_DIRECT',
+      endpoint: 'generativelanguage.googleapis.com',
+      status: 500,
+      statusText: 'ALL_MODELS_FAILED',
+      errorType: 'AI_PROVIDER_ERROR',
+      message: lastError?.message || 'Direct Gemini AI extraction failed across all model fallbacks.',
       requestId
     });
   }
