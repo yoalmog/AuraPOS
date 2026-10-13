@@ -739,11 +739,13 @@ CRITICAL EXTRACTION INSTRUCTIONS:
     let lastError: any = null;
     let successfulModel = '';
 
-    // Models supported by @google/genai SDK in priority order (accuracy first, light model as fallback)
+    // Models supported by @google/genai SDK in priority order (latest standard models first)
     const modelsToTry = [
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3.8-pro',
       'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-2.5-pro'
+      'gemini-2.0-flash'
     ];
 
     for (const modelName of modelsToTry) {
@@ -789,13 +791,25 @@ CRITICAL EXTRACTION INSTRUCTIONS:
       const is503 = lastError?.status === 503 || String(lastError?.message).includes('503');
       const is429 = lastError?.status === 429 || String(lastError?.message).includes('429');
 
+      let cleanErrorMessage = lastError?.message || 'All AI models failed to process the menu.';
+      try {
+        if (typeof cleanErrorMessage === 'string' && cleanErrorMessage.trim().startsWith('{')) {
+          const parsed = JSON.parse(cleanErrorMessage);
+          if (parsed?.error?.message) {
+            cleanErrorMessage = parsed.error.message;
+          }
+        }
+      } catch {
+        // preserve original message
+      }
+
       return res.status(is503 ? 503 : is429 ? 429 : 500).json({
         success: false,
         error: is503
           ? 'Google AI models are currently experiencing temporary high demand spikes. Please wait a few seconds and tap Retry.'
           : is429
           ? 'Google AI rate limit reached. Please wait a few seconds and tap Retry.'
-          : (lastError?.message || 'All AI models failed to process the menu.'),
+          : cleanErrorMessage,
         errorType: is503 ? 'AI_HIGH_DEMAND' : is429 ? 'AI_RATE_LIMIT' : 'AI_PROVIDER_ERROR',
         status: is503 ? 503 : is429 ? 429 : 500,
         requestId,
