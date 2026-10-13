@@ -51,7 +51,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({ isOpenOnMobile = false, on
 
   return (
     <div
-      className={`border-l border-[var(--theme-border)] theme-surface flex flex-col select-none shadow-sm shrink-0 ${
+      className={`border-r border-[var(--theme-border)] theme-surface flex flex-col select-none shadow-sm shrink-0 ${
         isOpenOnMobile
           ? 'fixed inset-0 z-50 overflow-hidden'
           : 'hidden lg:flex w-80 xl:w-96 h-[calc(100vh-4rem)] sticky top-16 z-10'

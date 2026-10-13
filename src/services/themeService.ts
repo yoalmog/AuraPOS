@@ -1365,10 +1365,10 @@ export class ThemeService {
    * Formats StoreSettings into AppearanceSettings object
    */
   static extractAppearance(settings: Partial<StoreSettings>): AppearanceSettings {
-    const palette = (settings.themePalette || settings.themeColor || 'blue') as ThemePaletteId;
+    const palette = (settings.themePalette || settings.themeColor || 'emerald') as ThemePaletteId;
     return {
       mode: (settings.themeMode || 'light') as ThemeMode,
-      palette: THEME_PALETTES[palette] ? palette : 'blue',
+      palette: THEME_PALETTES[palette] ? palette : 'emerald',
       backgroundStyle: (settings.themeBackgroundStyle || 'soft-tint') as BackgroundStyle,
       pattern: (settings.themePattern || 'none') as PatternStyle,
       accentColor: settings.themeAccentColor,

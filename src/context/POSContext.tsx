@@ -278,7 +278,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [language]);
 
   const [themeColor, setThemeColorState] = useState<ThemeColor>(() => {
-    return (StorageService.getSettings().themeColor as ThemeColor) || 'blue';
+    return (StorageService.getSettings().themeColor as ThemeColor) || 'emerald';
   });
 
   const [appearance, setAppearance] = useState<AppearanceSettings>(() => {

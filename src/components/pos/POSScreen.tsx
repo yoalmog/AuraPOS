@@ -91,32 +91,32 @@ export const POSScreen: React.FC<POSScreenProps> = ({ searchTerm }) => {
   });
 
   return (
-    <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-      {/* 1. Category Panel (Horizontal pills on mobile, vertical sidebar on desktop) */}
-      <CategoryPanel
-        selectedCategoryId={selectedCategoryId}
-        onSelectCategory={setSelectedCategoryId}
-      />
-
-      {/* 2. Product Grid (Center) */}
-      <ProductGrid
-        selectedCategoryId={selectedCategoryId}
-        searchTerm={searchTerm}
-      />
-
-      {/* 3. Cart Panel (Right sidebar on desktop, full overlay modal on mobile) */}
+    <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+      {/* 1. Ticket Panel (Left on Desktop/Tablet - Loyverse POS Layout) */}
       <CartPanel
         isOpenOnMobile={isMobileCartOpen}
         onCloseMobile={() => setIsMobileCartOpen(false)}
       />
 
-      {/* 4. Mobile Floating Cart Summary Button (< lg) */}
+      {/* 2. Catalog View (Right on Desktop/Tablet - Category Tabs on Top, Product Grid Below) */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+        <CategoryPanel
+          selectedCategoryId={selectedCategoryId}
+          onSelectCategory={setSelectedCategoryId}
+        />
+        <ProductGrid
+          selectedCategoryId={selectedCategoryId}
+          searchTerm={searchTerm}
+        />
+      </div>
+
+      {/* 3. Mobile Floating Cart Summary Button (< lg) */}
       {cartItems.length > 0 && !isMobileCartOpen && (
         <div className="lg:hidden fixed bottom-4 inset-x-4 z-30">
           <button
             type="button"
             onClick={() => setIsMobileCartOpen(true)}
-            className="w-full flex items-center justify-between px-4 py-3 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-2xl shadow-xl border border-blue-500/40 transition-all cursor-pointer"
+            className="w-full flex items-center justify-between px-4 py-3 bg-[var(--theme-primary)] hover:opacity-90 active:scale-[0.99] text-white rounded-2xl shadow-xl border border-white/20 transition-all cursor-pointer"
           >
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center text-xs font-bold font-mono">

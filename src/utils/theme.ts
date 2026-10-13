@@ -202,7 +202,7 @@ export function getTheme(themeId?: string): ThemePreset {
 /**
  * Applies CSS root variables according to current theme color and appearance
  */
-export function applyThemeVariables(themeId: ThemeColor = 'blue', mode?: 'light' | 'dark' | 'system') {
+export function applyThemeVariables(themeId: ThemeColor = 'emerald', mode?: 'light' | 'dark' | 'system') {
   if (typeof document === 'undefined') return;
 
   // Delegate to full centralized ThemeService

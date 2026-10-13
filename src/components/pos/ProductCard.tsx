@@ -86,7 +86,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
       }`}
     >
       {/* 1. Large Top Hero Image / Visual Banner */}
-      <div className="relative w-full h-32 sm:h-36 bg-slate-100 overflow-hidden shrink-0">
+      <div className="relative w-full h-26 sm:h-28 bg-slate-100 overflow-hidden shrink-0">
         {hasValidImage ? (
           <img
             src={product.imageUrl}

@@ -11,19 +11,7 @@
 }
 
 /* Theme color mappings for instant UI palette switching */
-:root, [data-theme="blue"] {
-  --color-primary: #2563eb;
-  --color-blue-50: #eff6ff;
-  --color-blue-100: #dbeafe;
-  --color-blue-200: #bfdbfe;
-  --color-blue-500: #3b82f6;
-  --color-blue-600: #2563eb;
-  --color-blue-700: #1d4ed8;
-  --color-blue-800: #1e40af;
-  --color-blue-900: #1e3a8a;
-}
-
-[data-theme="emerald"] {
+:root, [data-theme="emerald"] {
   --color-primary: #059669;
   --color-blue-50: #ecfdf5;
   --color-blue-100: #d1fae5;
@@ -33,6 +21,18 @@
   --color-blue-700: #047857;
   --color-blue-800: #065f46;
   --color-blue-900: #064e3b;
+}
+
+[data-theme="blue"] {
+  --color-primary: #2563eb;
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+  --color-blue-800: #1e40af;
+  --color-blue-900: #1e3a8a;
 }
 
 [data-theme="violet"] {
