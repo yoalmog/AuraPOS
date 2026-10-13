@@ -24,25 +24,30 @@ export class AccountingWebhookService {
    * Compute HMAC-SHA256 signature for webhook payload
    */
   static async signWebhookPayload(payload: string, secret: string): Promise<string> {
-    try {
-      const nodeCrypto = await import('crypto');
-      return nodeCrypto.createHmac('sha256', secret).update(payload).digest('hex');
-    } catch {
-      // Browser fallback using Web Crypto API
-      if (typeof crypto !== 'undefined' && crypto.subtle) {
+    // In browser environment, use standard Web Crypto API (zero node dependencies)
+    if (typeof window !== 'undefined' && window.crypto?.subtle) {
+      try {
         const enc = new TextEncoder();
-        const key = await crypto.subtle.importKey(
+        const key = await window.crypto.subtle.importKey(
           'raw',
           enc.encode(secret),
           { name: 'HMAC', hash: 'SHA-256' },
           false,
           ['sign']
         );
-        const signature = await crypto.subtle.sign('HMAC', key, enc.encode(payload));
+        const signature = await window.crypto.subtle.sign('HMAC', key, enc.encode(payload));
         return Array.from(new Uint8Array(signature))
           .map(b => b.toString(16).padStart(2, '0'))
           .join('');
+      } catch (browserCryptoErr) {
+        console.warn('Web Crypto sign error:', browserCryptoErr);
       }
+    }
+
+    try {
+      const nodeCrypto = await import('crypto');
+      return nodeCrypto.createHmac('sha256', secret).update(payload).digest('hex');
+    } catch {
       return 'mock_sig_fallback';
     }
   }
@@ -90,6 +95,17 @@ export class AccountingWebhookService {
     }
 
     return logs;
+  }
+
+  /**
+   * Generate double-entry General Ledger report using stored sales and movements
+   */
+  static generateGeneralLedgerReport(dateRange: { start?: string; end?: string } = {}): GeneralLedgerReport {
+    return this.generateGeneralLedger(
+      StorageService.getSales(),
+      StorageService.getInventoryMovements(),
+      dateRange
+    );
   }
 
   /**

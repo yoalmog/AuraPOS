@@ -224,7 +224,7 @@ export const BackOfficeView: React.FC = () => {
             productName: prod.name,
             sku: prod.sku,
             quantity: transferQty,
-            unitCost: prod.costPrice || prod.price * 0.6
+            unitCost: prod.cost || prod.price * 0.6
           }
         ],
         notes: transferNotes || undefined
@@ -1137,10 +1137,10 @@ export const BackOfficeView: React.FC = () => {
                             {pr.type}
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono font-bold text-[var(--theme-text-primary)]">
-                            {pr.type === 'percentage' ? `${pr.value}%` : formatCurrency(pr.value)}
+                            {pr.type === 'percentage_discount' ? `${pr.value}%` : formatCurrency(pr.value)}
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono text-[var(--theme-text-secondary)]">
-                            {pr.minSpend ? formatCurrency(pr.minSpend) : 'None'}
+                            {pr.minOrderAmount ? formatCurrency(pr.minOrderAmount) : 'None'}
                           </td>
                           <td className="py-2.5 px-3 text-center">
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
@@ -1184,7 +1184,7 @@ export const BackOfficeView: React.FC = () => {
                 <div className="text-right">
                   <div className="text-[10px] text-[var(--theme-text-secondary)] uppercase">Total Ledger Volume</div>
                   <div className="text-sm font-mono font-bold text-[var(--theme-text-primary)]">
-                    {formatCurrency(glReport?.totalDebits || 0)}
+                    {formatCurrency(glReport?.totalDebit || 0)}
                   </div>
                 </div>
                 <button
@@ -1204,7 +1204,7 @@ export const BackOfficeView: React.FC = () => {
                   Journal Entries ({glReport?.entries.length || 0})
                 </h4>
                 <span className="text-[11px] font-mono text-[var(--theme-text-secondary)]">
-                  Debits: {formatCurrency(glReport?.totalDebits || 0)} | Credits: {formatCurrency(glReport?.totalCredits || 0)}
+                  Debits: {formatCurrency(glReport?.totalDebit || 0)} | Credits: {formatCurrency(glReport?.totalCredit || 0)}
                 </span>
               </div>
               <div className="overflow-x-auto max-h-96">
@@ -1231,13 +1231,13 @@ export const BackOfficeView: React.FC = () => {
                       glReport.entries.slice(0, 30).map((en, idx) => (
                         <tr key={idx} className="hover:bg-[var(--theme-surface-variant)]/50">
                           <td className="py-2.5 px-4 font-mono font-bold text-[var(--theme-text-primary)]">
-                            {en.entryNumber}
+                            {en.id}
                           </td>
                           <td className="py-2.5 px-4 text-[var(--theme-text-secondary)]">
                             {formatDate(en.date)}
                           </td>
                           <td className="py-2.5 px-4 font-mono font-semibold text-indigo-600">
-                            {en.accountCode}
+                            {en.account}
                           </td>
                           <td className="py-2.5 px-4 font-medium text-[var(--theme-text-primary)]">
                             {en.accountName}
@@ -1294,7 +1294,7 @@ export const BackOfficeView: React.FC = () => {
                       <div>
                         <div className="font-bold text-[var(--theme-text-primary)]">{sub.name}</div>
                         <div className="text-[11px] font-mono text-[var(--theme-text-secondary)] truncate max-w-md">
-                          {sub.targetUrl}
+                          {sub.url}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
